@@ -157,7 +157,7 @@ if(WITH_CYCLES_HYDRA_RENDER_DELEGATE)
     # Install inside add-on
     set(CYCLES_HYDRA_INSTALL_PATH ${CYCLES_INSTALL_PATH}/hydra)
   elseif(HOUDINI_FOUND)
-    set(CYCLES_HYDRA_INSTALL_PATH ${CYCLES_INSTALL_PATH}/houdini/dso)
+    set(CYCLES_HYDRA_INSTALL_PATH ${CYCLES_INSTALL_PATH}/dso)
   else()
     # Install next to cycles executable
     set(CYCLES_HYDRA_INSTALL_PATH ${CMAKE_INSTALL_PREFIX}/hydra)
@@ -191,7 +191,7 @@ if(WITH_CYCLES_HYDRA_RENDER_DELEGATE)
         "${CYCLES_HYDRA_INSTALL_PATH}/usd_plugins/${HdCyclesPluginName}"
         "${CYCLES_HYDRA_INSTALL_PATH}/usd/${HdCyclesPluginName}${CMAKE_SHARED_LIBRARY_SUFFIX}")
       file(RELATIVE_PATH PLUG_INFO_RESOURCE_PATH
-        "${CYCLES_HYDRA_INSTALL_PATH}/${HdCyclesPluginName}"
+        "${CYCLES_HYDRA_INSTALL_PATH}/usd_plugins/${HdCyclesPluginName}"
         "${CYCLES_INSTALL_PATH}")
     else()
       file(RELATIVE_PATH

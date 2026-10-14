@@ -4,7 +4,13 @@
 
 # Standalone or with Blender
 if(NOT WITH_BLENDER)
-  set(CYCLES_INSTALL_PATH ${CMAKE_INSTALL_PREFIX})
+  if(HOUDINI_FOUND)
+    # Keep kernel sources, precompiled kernels and licenses inside the Houdini package, where
+    # the plugin's resource path points.
+    set(CYCLES_INSTALL_PATH ${CMAKE_INSTALL_PREFIX}/houdini)
+  else()
+    set(CYCLES_INSTALL_PATH ${CMAKE_INSTALL_PREFIX})
+  endif()
 else()
   set(WITH_CYCLES_BLENDER ON)
   # WINDOWS_PYTHON_DEBUG needs to write into the user addons folder since it will
