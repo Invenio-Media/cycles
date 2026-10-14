@@ -53,6 +53,12 @@ HdCyclesRenderPass::~HdCyclesRenderPass()
 
 bool HdCyclesRenderPass::IsConverged() const
 {
+  // A failed session never fills the render buffers; report it as done so the host stops
+  // waiting. The failure itself is reported through the render stats.
+  if (_renderParam->session->progress.get_error()) {
+    return true;
+  }
+
   for (const HdRenderPassAovBinding &aovBinding : _renderParam->GetAovBindings()) {
     if (aovBinding.renderBuffer && !aovBinding.renderBuffer->IsConverged()) {
       return false;

@@ -330,6 +330,7 @@ VtDictionary HdCyclesDelegate::GetRenderStats() const
     status += " | " + substatus;
   }
 
+  // husk reads huskErrorStatus and exits non-zero when it is set.
   return {{"rendererName", VtValue("Cycles")},
           {"rendererVersion", VtValue(GfVec3i(0, 0, 0))},
           {"percentDone", VtValue(floor_to_int(fractionDone * 100))},
@@ -338,7 +339,8 @@ VtDictionary HdCyclesDelegate::GetRenderStats() const
           {"peakMemory", VtValue(stats.mem_peak)},
           {"totalClockTime", VtValue(totalTime)},
           {"totalMemory", VtValue(stats.mem_used)},
-          {"renderProgressAnnotation", VtValue(status)}};
+          {"renderProgressAnnotation", VtValue(status)},
+          {"huskErrorStatus", VtValue(progress.get_error() ? 1 : 0)}};
 }
 
 HdAovDescriptor HdCyclesDelegate::GetDefaultAovDescriptor(const TfToken &name) const
