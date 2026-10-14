@@ -31,7 +31,7 @@ if(HOUDINI_ROOT AND EXISTS ${HOUDINI_ROOT})
   string(REGEX MATCHALL "[0-9]+" HOUDINI_VERSION_MAJOR ${_houdini_version_major})
 
   # USD
-  set(USD_LIBRARIES hd hgi hgiGL gf arch garch plug tf trace vt work sdf cameraUtil hf pxOsd usd usdImaging usdGeom python)
+  set(USD_LIBRARIES hd hdsi hgi hgiGL gf arch garch plug tf trace vt work sdf cameraUtil hf pxOsd usd usdImaging usdGeom python)
 
   foreach(lib ${USD_LIBRARIES})
     find_library(_pxr_library NAMES pxr_${lib} PATHS ${_library_dir} NO_DEFAULT_PATH)
@@ -172,10 +172,13 @@ if(HOUDINI_ROOT AND EXISTS ${HOUDINI_ROOT})
         INTERFACE_INCLUDE_DIRECTORIES "${_include_dir}"
       )  
     add_library(OpenImageIO::OpenImageIO UNKNOWN IMPORTED)
+    # Houdini's OIIO 2.5 bundles fmt 10.0.0, whose consteval format-string checks fail to
+    # compile in C++20 with current Clang. An empty FMT_CONSTEVAL turns those checks off.
     set_target_properties(OpenImageIO::OpenImageIO PROPERTIES
       IMPORTED_LOCATION "${_openimageio_library}"
       INTERFACE_LINK_LIBRARIES "${_openimageio_util_library}"
       INTERFACE_INCLUDE_DIRECTORIES "${_include_dir}"
+      INTERFACE_COMPILE_DEFINITIONS "FMT_CONSTEVAL="
     )
 
     set(USD_OVERRIDE_OPENIMAGEIO ON)
