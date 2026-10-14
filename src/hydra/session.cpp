@@ -18,6 +18,12 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 namespace {
 
+// clang-format off
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    (sourceName)
+);
+// clang-format on
+
 const std::unordered_map<TfToken, PassType, TfToken::HashFunctor> kAovToPass = {
     {HdAovTokens->color, PASS_COMBINED},
     {HdAovTokens->depth, PASS_DEPTH},
@@ -148,10 +154,25 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
   // Update passes with requested AOV bindings
   _aovBindings = aovBindings;
   for (const HdRenderPassAovBinding &aovBinding : aovBindings) {
-    const auto cyclesAov = kAovToPass.find(aovBinding.aovName);
+    // husk names a binding after its output channel (for example "C") and passes the
+    // RenderVar's source name ("color") in the AOV settings. The pass type comes from the
+    // source name; the pass keeps the binding's name, which is what the output driver reads.
+    TfToken sourceName = aovBinding.aovName;
+    const auto sourceNameSetting = aovBinding.aovSettings.find(_tokens->sourceName);
+    if (sourceNameSetting != aovBinding.aovSettings.end()) {
+      const VtValue &value = sourceNameSetting->second;
+      if (value.IsHolding<std::string>()) {
+        sourceName = TfToken(value.UncheckedGet<std::string>());
+      }
+      else if (value.IsHolding<TfToken>()) {
+        sourceName = value.UncheckedGet<TfToken>();
+      }
+    }
+
+    const auto cyclesAov = kAovToPass.find(sourceName);
     if (cyclesAov == kAovToPass.end()) {
       // TODO: Use PASS_AOV_COLOR and PASS_AOV_VALUE for these?
-      TF_WARN("Unknown pass %s", aovBinding.aovName.GetText());
+      TF_WARN("Unknown pass %s", sourceName.GetText());
       continue;
     }
 
