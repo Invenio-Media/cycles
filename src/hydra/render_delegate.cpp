@@ -19,6 +19,7 @@
 #include "hydra/volume.h"
 #include "scene/integrator.h"
 #include "scene/scene.h"
+#include "scene/shader.h"
 #include "session/session.h"
 #include "util/colorspace.h"
 
@@ -116,7 +117,7 @@ SessionParams GetSessionParams(const HdRenderSettingsMap &settings)
 }
 
 // Cycles' working colorspace is process-wide: every open delegate renders in the one set
-// last. Tracked so that opening a delegate with a different one can be reported.
+// last. Tracked so that a delegate switching to a different one can be reported.
 std::mutex g_colorSpaceMutex;
 int g_liveDelegates = 0;
 std::string g_activeColorSpace;
@@ -140,6 +141,11 @@ HdCyclesDelegate::HdCyclesDelegate(const HdRenderSettingsMap &settingsMap,
                                    const bool keep_nodes)
     : HdRenderDelegate()
 {
+  {
+    const std::lock_guard<std::mutex> lock(g_colorSpaceMutex);
+    ++g_liveDelegates;
+  }
+
   // Cycles' working colorspace is process-wide, and the scene reads it when it is created, so
   // set it before the session. Without the setting, use the OCIO config's scene_linear role,
   // rather than whatever an earlier delegate left behind.
@@ -148,19 +154,6 @@ HdCyclesDelegate::HdCyclesDelegate(const HdRenderSettingsMap &settingsMap,
   ApplyRenderingColorSpace(colorSpaceSetting != settingsMap.end() ?
                                GetColorSpaceName(colorSpaceSetting->second) :
                                std::string());
-  {
-    const std::lock_guard<std::mutex> lock(g_colorSpaceMutex);
-    if (g_liveDelegates > 0 && g_activeColorSpace != _renderingColorSpace) {
-      TF_WARN(
-          "Cycles renderers with different rendering color spaces are open ('%s' and '%s'); "
-          "all of them now render in '%s'",
-          g_activeColorSpace.c_str(),
-          _renderingColorSpace.c_str(),
-          _renderingColorSpace.c_str());
-    }
-    g_activeColorSpace = _renderingColorSpace;
-    ++g_liveDelegates;
-  }
 
   _renderParam = session_ ? std::make_unique<HdCyclesSession>(session_, keep_nodes) :
                             std::make_unique<HdCyclesSession>(GetSessionParams(settingsMap));
@@ -188,6 +181,17 @@ void HdCyclesDelegate::ApplyRenderingColorSpace(std::string colorSpace)
     CCL_NS::ColorSpaceManager::set_scene_linear_colorspace(colorSpace);
   }
   _renderingColorSpace = std::move(colorSpace);
+
+  const std::lock_guard<std::mutex> lock(g_colorSpaceMutex);
+  if (g_liveDelegates > 1 && g_activeColorSpace != _renderingColorSpace) {
+    TF_WARN(
+        "Cycles renderers with different rendering color spaces are open ('%s' and '%s'); "
+        "all of them now render in '%s'",
+        g_activeColorSpace.c_str(),
+        _renderingColorSpace.c_str(),
+        _renderingColorSpace.c_str());
+  }
+  g_activeColorSpace = _renderingColorSpace;
 }
 
 HdCyclesDelegate::~HdCyclesDelegate()
@@ -487,14 +491,17 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     ++_settingsVersion;
   }
   else if (key == HdCyclesRenderSettingsTokens->renderingColorSpace) {
-    // The working colorspace is fixed when the delegate is created, because images are
-    // converted to it as they load. Hosts restart the renderer when it changes
-    // (UsdRenderers.json restartrendersettings).
-    const std::string colorSpace = GetColorSpaceName(value);
+    // Houdini's viewport creates the delegate without settings and sets them before the first
+    // sync, and restarts the renderer when this one changes later (restartrendersettings).
+    // Images already converted to the old space would not be reloaded.
+    std::string colorSpace = GetColorSpaceName(value);
     if (colorSpace != _requestedColorSpace) {
-      TF_WARN("Rendering color space changed to '%s'; restart the renderer to apply it",
-              colorSpace.c_str());
-      _requestedColorSpace = colorSpace;
+      // The render thread reads the colour matrices while it updates the scene.
+      const thread_scoped_lock sceneLock(scene->mutex);
+      ApplyRenderingColorSpace(std::move(colorSpace));
+      scene->shader_manager->init_xyz_transforms();
+      scene->shader_manager->tag_update(scene, ShaderManager::UPDATE_ALL);
+      ++_settingsVersion;
     }
   }
   else {
