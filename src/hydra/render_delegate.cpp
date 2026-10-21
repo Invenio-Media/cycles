@@ -568,14 +568,16 @@ void HdCyclesDelegate::DestroyRprim(HdRprim *rPrim)
 
 HdSprim *HdCyclesDelegate::CreateSprim(const TfToken &typeId, const SdfPath &sprimId)
 {
-  // Non-fallback Sprims (path is not empty) mark the end of the pre-prim window.
+  // Cameras hold no Cycles scene data (the render pass applies them to the scene camera), and
+  // Houdini's viewport creates one before it sends render settings, so they must not block a
+  // session rebuild. Other non-fallback Sprims mark the end of the pre-prim window.
+  if (typeId == HdPrimTypeTokens->camera) {
+    return new HdCyclesCamera(sprimId);
+  }
   if (!sprimId.IsEmpty()) {
     ++_realPrimCount;
   }
 
-  if (typeId == HdPrimTypeTokens->camera) {
-    return new HdCyclesCamera(sprimId);
-  }
   if (typeId == HdPrimTypeTokens->material) {
     return new HdCyclesMaterial(sprimId);
   }
@@ -597,8 +599,10 @@ HdSprim *HdCyclesDelegate::CreateFallbackSprim(const TfToken &typeId)
 
 void HdCyclesDelegate::DestroySprim(HdSprim *sPrim)
 {
-  // Decrement only for non-fallback sprims (which had non-empty paths).
-  if (sPrim && !sPrim->GetId().IsEmpty() && _realPrimCount > 0) {
+  // Decrement only for the Sprims CreateSprim counted: non-fallback, non-camera.
+  if (sPrim && !sPrim->GetId().IsEmpty() && !dynamic_cast<HdCyclesCamera *>(sPrim) &&
+      _realPrimCount > 0)
+  {
     --_realPrimCount;
   }
   delete sPrim;
@@ -606,12 +610,15 @@ void HdCyclesDelegate::DestroySprim(HdSprim *sPrim)
 
 HdBprim *HdCyclesDelegate::CreateBprim(const TfToken &typeId, const SdfPath &bprimId)
 {
-  if (!bprimId.IsEmpty()) {
-    ++_realPrimCount;
-  }
-
+  // Render buffers hold no Cycles scene data: their AOV bindings live in the session and are
+  // synced on the first render-pass execute. Houdini's viewport creates its render buffers
+  // before it sends render settings, so they must not block a session rebuild.
   if (typeId == HdPrimTypeTokens->renderBuffer) {
     return new HdCyclesRenderBuffer(bprimId);
+  }
+
+  if (!bprimId.IsEmpty()) {
+    ++_realPrimCount;
   }
 #ifdef WITH_OPENVDB
   if (typeId == _tokens->openvdbAsset) {
@@ -630,7 +637,9 @@ HdBprim *HdCyclesDelegate::CreateFallbackBprim(const TfToken &typeId)
 
 void HdCyclesDelegate::DestroyBprim(HdBprim *bPrim)
 {
-  if (bPrim && !bPrim->GetId().IsEmpty() && _realPrimCount > 0) {
+  if (bPrim && !bPrim->GetId().IsEmpty() && !dynamic_cast<HdCyclesRenderBuffer *>(bPrim) &&
+      _realPrimCount > 0)
+  {
     --_realPrimCount;
   }
   delete bPrim;
@@ -820,7 +829,15 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
   if (IsRestartOnlyKey(key)) {
     _restartSettings[key] = value;
     if (CanRebuildSession()) {
-      RebuildSession();
+      // A stage usually authors every restart-only setting, most of them at values the
+      // current session already has; only rebuild (and recreate the device) when the Session
+      // or Scene parameters actually change.
+      const Session *session = _renderParam->session;
+      if (BuildSessionParams().modified(session->params) ||
+          BuildSceneParams().modified(session->scene->params))
+      {
+        RebuildSession();
+      }
     }
     else {
       // Emit a warning once per key, then ignore.
