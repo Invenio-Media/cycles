@@ -6,6 +6,7 @@
 #pragma once
 
 #include "hydra/config.h"
+#include "scene/scene.h"
 #include "util/thread.h"
 
 #include <pxr/imaging/hd/renderDelegate.h>
@@ -25,7 +26,8 @@ struct SceneLock {
 class HdCyclesSession final : public PXR_NS::HdRenderParam {
  public:
   HdCyclesSession(CCL_NS::Session *session_, const bool keep_nodes);
-  HdCyclesSession(const CCL_NS::SessionParams &params);
+  HdCyclesSession(const CCL_NS::SessionParams &params,
+                  const CCL_NS::SceneParams &sceneParams = CCL_NS::SceneParams());
   ~HdCyclesSession() override;
 
   void UpdateScene();
@@ -61,6 +63,10 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
 
   CCL_NS::Session *session;
   bool keep_nodes;
+
+  // When true, the background is kept transparent even if a dome light (background shader)
+  // is present. Controlled by cycles:film:transparent.
+  bool filmTransparent = false;
 
  private:
   const bool _ownCyclesSession;

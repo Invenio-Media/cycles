@@ -47,8 +47,8 @@ HdCyclesSession::HdCyclesSession(Session *session_, const bool keep_nodes)
 {
 }
 
-HdCyclesSession::HdCyclesSession(const SessionParams &params)
-    : session(new Session(params, SceneParams())), keep_nodes(false), _ownCyclesSession(true)
+HdCyclesSession::HdCyclesSession(const SessionParams &params, const SceneParams &sceneParams)
+    : session(new Session(params, sceneParams)), keep_nodes(false), _ownCyclesSession(true)
 {
   Scene *const scene = session->scene.get();
 
@@ -136,7 +136,10 @@ void HdCyclesSession::UpdateScene()
     }
     else {
       scene->background->set_shader(background_light->get_shader());
-      scene->background->set_transparent(false);
+      // cycles:film:transparent overrides the default behaviour of making the background
+      // opaque when a dome light is present, keeping it transparent so the dome colour
+      // shows in passes while alpha remains 0 on the background.
+      scene->background->set_transparent(filmTransparent);
     }
 
     scene->background->tag_update(scene);

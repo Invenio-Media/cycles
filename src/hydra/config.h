@@ -38,6 +38,7 @@ class Pass;
 class PointCloud;
 class Scene;
 class Session;
+class SceneParams;
 class SessionParams;
 class Shader;
 class ShaderGraph;

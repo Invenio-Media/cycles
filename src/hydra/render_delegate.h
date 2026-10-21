@@ -10,17 +10,37 @@
 #include <pxr/imaging/hd/renderDelegate.h>
 #include <pxr/imaging/hgi/hgi.h>
 
+#include <unordered_map>
+#include <unordered_set>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 // clang-format off
 #define HD_CYCLES_RENDER_SETTINGS_TOKENS \
     (stageMetersPerUnit) \
-    ((device, "cycles:device")) \
-    ((threads, "cycles:threads")) \
-    ((timeLimit, "cycles:time_limit")) \
-    ((samples, "cycles:samples")) \
-    ((sampleOffset, "cycles:sample_offset")) \
-    (renderingColorSpace)
+    ((device,           "cycles:device")) \
+    ((threads,          "cycles:threads")) \
+    ((timeLimit,        "cycles:time_limit")) \
+    ((samples,          "cycles:samples")) \
+    ((sampleOffset,     "cycles:sample_offset")) \
+    (renderingColorSpace) \
+    ((settingsManifest, "cycles:settings_manifest")) \
+    /* film sockets */ \
+    ((filmExposure,                 "cycles:film:exposure")) \
+    ((filmPassAlphaThreshold,       "cycles:film:pass_alpha_threshold")) \
+    ((filmFilterType,               "cycles:film:filter_type")) \
+    ((filmFilterWidth,              "cycles:film:filter_width")) \
+    ((filmUseApproxShadowCatcher,   "cycles:film:use_approximate_shadow_catcher")) \
+    ((filmTransparent,              "cycles:film:transparent")) \
+    /* session restart params */ \
+    ((sessionUseAutoTile,  "cycles:session:use_auto_tile")) \
+    ((sessionTileSize,     "cycles:session:tile_size")) \
+    /* scene restart params */ \
+    ((sceneUseBvhSpatialSplit, "cycles:scene:use_bvh_spatial_split")) \
+    ((sceneUseTextureCache,    "cycles:scene:use_texture_cache")) \
+    ((sceneAutoTextureCache,   "cycles:scene:auto_texture_cache")) \
+    ((sceneTextureCachePath,   "cycles:scene:texture_cache_path")) \
+    ((sceneTextureLimit,       "cycles:scene:texture_limit"))
 // clang-format on
 
 TF_DECLARE_PUBLIC_TOKENS(HdCyclesRenderSettingsTokens, HD_CYCLES_RENDER_SETTINGS_TOKENS);
@@ -101,9 +121,47 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
   // when it named a colorspace the config does not have.
   std::string _requestedColorSpace;
 
+  // Whether the background should be kept transparent even when a dome light is present.
+  bool _filmTransparent = false;
+
+  // Device type actually in use (upper-case Cycles type name, e.g. "CPU", "METAL").
+  mutable std::string _effectiveDeviceType;
+
+  // Settings that require a full Session rebuild (restart:true).
+  // Stored so they can be replayed when a rebuild is triggered before any prims exist.
+  std::unordered_map<PXR_NS::TfToken, PXR_NS::VtValue, PXR_NS::TfToken::HashFunctor>
+      _restartSettings;
+
+  // Non-restart settings applied so far; replayed on rebuild so that film/integrator
+  // settings that arrived before the restart setting are not lost.
+  std::unordered_map<PXR_NS::TfToken, PXR_NS::VtValue, PXR_NS::TfToken::HashFunctor>
+      _appliedSettings;
+
+  // Keys for which we have already emitted "restart required" warnings (post-prim).
+  std::unordered_set<PXR_NS::TfToken, PXR_NS::TfToken::HashFunctor> _warnedRestartOnly;
+
+  // Count of real (non-fallback) prims that have been created. While this is zero
+  // restart-only settings trigger a Session rebuild; after it goes positive they are ignored.
+  int _realPrimCount = 0;
+
   // Makes Cycles render in this colorspace of the OCIO config; empty, or a name the config
   // does not have, means the config's scene_linear role.
   void ApplyRenderingColorSpace(std::string colorSpace);
+
+  // Rebuild the Cycles Session from _restartSettings, then replay _appliedSettings.
+  void RebuildSession();
+
+  // Build the current session params (device selection + threads + tile).
+  CCL_NS::SessionParams BuildSessionParams() const;
+  // Build the current scene params (BVH / texture cache).
+  CCL_NS::SceneParams BuildSceneParams() const;
+
+  // Returns true when a restart-only setting change should trigger a rebuild.
+  // False means the setting should be ignored with a TF_WARN.
+  bool CanRebuildSession() const
+  {
+    return _realPrimCount == 0;
+  }
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE
