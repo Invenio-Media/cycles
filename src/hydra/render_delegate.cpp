@@ -19,7 +19,9 @@
 #include "hydra/volume.h"
 #include "scene/integrator.h"
 #include "scene/scene.h"
+#include "scene/shader.h"
 #include "session/session.h"
+#include "util/colorspace.h"
 
 #include <pxr/base/tf/getenv.h>
 #include <pxr/imaging/hgi/tokens.h>
@@ -112,6 +114,18 @@ SessionParams GetSessionParams(const HdRenderSettingsMap &settings)
   return params;
 }
 
+// renderingColorSpace is a token in UsdRenderSettings; accept a string as well.
+std::string GetColorSpaceName(const VtValue &value)
+{
+  if (value.IsHolding<TfToken>()) {
+    return value.UncheckedGet<TfToken>().GetString();
+  }
+  if (value.IsHolding<std::string>()) {
+    return value.UncheckedGet<std::string>();
+  }
+  return std::string();
+}
+
 }  // namespace
 
 HdCyclesDelegate::HdCyclesDelegate(const HdRenderSettingsMap &settingsMap,
@@ -119,19 +133,40 @@ HdCyclesDelegate::HdCyclesDelegate(const HdRenderSettingsMap &settingsMap,
                                    const bool keep_nodes)
     : HdRenderDelegate()
 {
+  // Cycles' working colorspace is process-wide, and the scene reads it when it is created, so
+  // set it before the session. Without the setting, use the OCIO config's scene_linear role,
+  // rather than whatever an earlier delegate left behind.
+  const auto colorSpaceSetting = settingsMap.find(
+      HdCyclesRenderSettingsTokens->renderingColorSpace);
+  ApplyRenderingColorSpace(colorSpaceSetting != settingsMap.end() ?
+                               GetColorSpaceName(colorSpaceSetting->second) :
+                               std::string());
+
   _renderParam = session_ ? std::make_unique<HdCyclesSession>(session_, keep_nodes) :
                             std::make_unique<HdCyclesSession>(GetSessionParams(settingsMap));
 
   for (const auto &setting : settingsMap) {
     // Skip over the settings known to be used for initialization only
     if (setting.first == HdCyclesRenderSettingsTokens->device ||
-        setting.first == HdCyclesRenderSettingsTokens->threads)
+        setting.first == HdCyclesRenderSettingsTokens->threads ||
+        setting.first == HdCyclesRenderSettingsTokens->renderingColorSpace)
     {
       continue;
     }
 
     SetRenderSetting(setting.first, setting.second);
   }
+}
+
+void HdCyclesDelegate::ApplyRenderingColorSpace(std::string colorSpace)
+{
+  if (!CCL_NS::ColorSpaceManager::set_scene_linear_colorspace(colorSpace)) {
+    TF_WARN("Rendering color space '%s' is not in the OCIO config, using its scene_linear role",
+            colorSpace.c_str());
+    colorSpace.clear();
+    CCL_NS::ColorSpaceManager::set_scene_linear_colorspace(colorSpace);
+  }
+  _renderingColorSpace = std::move(colorSpace);
 }
 
 HdCyclesDelegate::~HdCyclesDelegate() = default;
@@ -426,6 +461,17 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     session->params.use_sample_subset = session->params.sample_subset_offset > 0;
     ++_settingsVersion;
   }
+  else if (key == HdCyclesRenderSettingsTokens->renderingColorSpace) {
+    // Hosts restart the renderer when this changes (UsdRenderers.json restartrendersettings),
+    // because images already converted to the old space are not reloaded.
+    std::string colorSpace = GetColorSpaceName(value);
+    if (colorSpace != _renderingColorSpace) {
+      ApplyRenderingColorSpace(std::move(colorSpace));
+      scene->shader_manager->init_xyz_transforms();
+      scene->shader_manager->tag_update(scene, ShaderManager::UPDATE_ALL);
+      ++_settingsVersion;
+    }
+  }
   else {
     const std::string &keyString = key.GetString();
     if (keyString.rfind("cycles:integrator:", 0) == 0) {
@@ -460,6 +506,9 @@ VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
   }
   if (key == HdCyclesRenderSettingsTokens->sampleOffset) {
     return VtValue((session->params.use_sample_subset) ? session->params.sample_subset_offset : 0);
+  }
+  if (key == HdCyclesRenderSettingsTokens->renderingColorSpace) {
+    return VtValue(TfToken(_renderingColorSpace));
   }
 
   const std::string &keyString = key.GetString();

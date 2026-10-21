@@ -19,7 +19,8 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
     ((threads, "cycles:threads")) \
     ((timeLimit, "cycles:time_limit")) \
     ((samples, "cycles:samples")) \
-    ((sampleOffset, "cycles:sample_offset"))
+    ((sampleOffset, "cycles:sample_offset")) \
+    (renderingColorSpace)
 // clang-format on
 
 TF_DECLARE_PUBLIC_TOKENS(HdCyclesRenderSettingsTokens, HD_CYCLES_RENDER_SETTINGS_TOKENS);
@@ -93,6 +94,13 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
  private:
   PXR_NS::Hgi *_hgi = nullptr;
   std::unique_ptr<HdCyclesSession> _renderParam;
+  // Working colorspace from UsdRenderSettings.renderingColorSpace; empty means the OCIO
+  // config's scene_linear role.
+  std::string _renderingColorSpace;
+
+  // Makes Cycles render in this colorspace of the OCIO config; empty, or a name the config
+  // does not have, means the config's scene_linear role.
+  void ApplyRenderingColorSpace(std::string colorSpace);
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE
