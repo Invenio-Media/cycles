@@ -11,6 +11,7 @@
 #include "scene/shader.h"
 #include "scene/shader_graph.h"
 #include "scene/shader_nodes.h"
+#include "util/colorspace.h"
 
 #include <pxr/imaging/hd/material.h>
 #include <pxr/imaging/hd/materialConnectionSchema.h>
@@ -60,6 +61,9 @@ TF_DEFINE_PRIVATE_TOKENS(CyclesMaterialTokens,
     (wrapS)
     (wrapT)
     (periodic)
+    (sourceColorSpace)
+    (sRGB)
+    (raw)
 );
 // clang-format on
 
@@ -78,6 +82,9 @@ class UsdToCyclesMapping {
   {
     return _nodeType;
   }
+
+  /* Called once on a newly created Cycles node, before the authored parameters are set. */
+  virtual void initializeNode(ShaderNode * /*node*/) const {}
 
   virtual std::string parameterName(const TfToken &name,
                                     const ShaderInput *inputConnection,
@@ -146,23 +153,79 @@ class UsdToCyclesTexture : public UsdToCyclesMapping {
 
         return "extension";
       }
+
+      /* UsdUVTexture's sourceColorSpace values are not OCIO colorspace names, and the host's
+       * config need not define "sRGB" or "raw", in which case Cycles would read the texture as
+       * linear. Map them to the config's sRGB texture colorspace and to non-color data. */
+      if (name == CyclesMaterialTokens->sourceColorSpace) {
+        const TfToken valueToken = value->IsHolding<std::string>() ?
+                                       TfToken(value->UncheckedGet<std::string>()) :
+                                       VtValue::Cast<TfToken>(*value).GetWithDefault(TfToken());
+        if (valueToken == CyclesMaterialTokens->raw) {
+          *value = VtValue(TfToken(u_colorspace_data.string()));
+          return "colorspace";
+        }
+        if (valueToken == CyclesMaterialTokens->sRGB) {
+          /* The ColorInterop ID first, then the names and aliases of the ACES and Houdini
+           * configs. */
+          const ustring srgb = ColorSpaceManager::find_colorspace(
+              {"srgb_rec709_scene", "srgb_tx", "sRGB - Texture", "srgb_texture", "sRGB"});
+          if (!srgb.empty()) {
+            *value = VtValue(TfToken(srgb.string()));
+            return "colorspace";
+          }
+        }
+        /* "auto", or no sRGB colorspace in the config: reset to Cycles' automatic detection
+         * from the file and the config's file rules. */
+        *value = VtValue();
+        return "colorspace";
+      }
     }
 
     return UsdToCyclesMapping::parameterName(name, inputConnection, value);
   }
 };
 
+class UsdToCyclesPreviewSurface : public UsdToCyclesMapping {
+ public:
+  using UsdToCyclesMapping::UsdToCyclesMapping;
+
+  /* Start from the UsdPreviewSurface defaults, which differ from the Principled BSDF's, so
+   * that inputs the material does not author render as the specification says. */
+  void initializeNode(ShaderNode *node) const override
+  {
+    const auto setFloat3 = [node](const char *input, const float3 value) {
+      node->set(*node->type->find_input(ustring(input)), value);
+    };
+    const auto setFloat = [node](const char *input, const float value) {
+      node->set(*node->type->find_input(ustring(input)), value);
+    };
+    setFloat3("base_color", make_float3(0.18f, 0.18f, 0.18f));
+    setFloat3("emission_color", zero_float3());
+    /* UsdPreviewSurface's emissiveColor is the emitted radiance. */
+    setFloat("emission_strength", 1.0f);
+    setFloat("roughness", 0.5f);
+    setFloat("metallic", 0.0f);
+    setFloat("ior", 1.5f);
+    setFloat("alpha", 1.0f);
+    setFloat("coat_weight", 0.0f);
+    setFloat("coat_roughness", 0.01f);
+  }
+};
+
 namespace {
 
 class UsdToCycles {
-  const UsdToCyclesMapping UsdPreviewSurface = {
+  const UsdToCyclesPreviewSurface UsdPreviewSurface = {
       "principled_bsdf",
       {
           {TfToken("diffuseColor"), ustring("base_color")},
-          {TfToken("emissiveColor"), ustring("emission")},
-          {TfToken("specularColor"), ustring("specular")},
+          {TfToken("emissiveColor"), ustring("emission_color")},
+          {TfToken("specularColor"), ustring("specular_tint")},
+          {TfToken("clearcoat"), ustring("coat_weight")},
           {TfToken("clearcoatRoughness"), ustring("coat_roughness")},
           {TfToken("opacity"), ustring("alpha")},
+          /* useSpecularWorkflow */
           /* opacityThreshold */
           /* occlusion */
           /* displacement */
@@ -300,7 +363,13 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
       continue;
     }
 
-    SetNodeValue(nodeDesc.node, *input, value);
+    /* An empty value from the mapping means the input's default. */
+    if (value.IsEmpty()) {
+      nodeDesc.node->set_default_value(*input);
+    }
+    else {
+      SetNodeValue(nodeDesc.node, *input, value);
+    }
   }
 }
 
@@ -455,6 +524,9 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
       /* If it's a native Cycles' node-type, just do the lookup now. */
       if (const NodeType *nodeType = NodeType::find(cyclesType)) {
         nodeDesc.node = graph->create_node(nodeType);
+        if (nodeDesc.mapping) {
+          nodeDesc.mapping->initializeNode(nodeDesc.node);
+        }
         _nodes.emplace(nodePath, nodeDesc);
       }
       else {
