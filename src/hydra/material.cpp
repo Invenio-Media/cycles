@@ -191,14 +191,30 @@ class UsdToCyclesPreviewSurface : public UsdToCyclesMapping {
   using UsdToCyclesMapping::UsdToCyclesMapping;
 
   /* Start from the UsdPreviewSurface defaults, which differ from the Principled BSDF's, so
-   * that inputs the material does not author render as the specification says. */
+   * that inputs the material does not author render as the specification says. specular_tint
+   * keeps the Principled default (white): UsdPreviewSurface's specularColor only applies with
+   * useSpecularWorkflow, which is not translated yet. */
   void initializeNode(ShaderNode *node) const override
   {
-    const auto setFloat3 = [node](const char *input, const float3 value) {
-      node->set(*node->type->find_input(ustring(input)), value);
+    /* Warn rather than crash if a later Cycles renames a socket, as 4.0 did with emission. */
+    const auto findInput = [node](const char *name) -> const SocketType * {
+      const SocketType *input = node->type->find_input(ustring(name));
+      if (!input) {
+        TF_WARN("UsdPreviewSurface: Cycles node '%s' has no input '%s'",
+                node->type->name.c_str(),
+                name);
+      }
+      return input;
     };
-    const auto setFloat = [node](const char *input, const float value) {
-      node->set(*node->type->find_input(ustring(input)), value);
+    const auto setFloat3 = [&](const char *name, const float3 value) {
+      if (const SocketType *input = findInput(name)) {
+        node->set(*input, value);
+      }
+    };
+    const auto setFloat = [&](const char *name, const float value) {
+      if (const SocketType *input = findInput(name)) {
+        node->set(*input, value);
+      }
     };
     setFloat3("base_color", make_float3(0.18f, 0.18f, 0.18f));
     setFloat3("emission_color", zero_float3());

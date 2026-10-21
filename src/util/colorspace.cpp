@@ -312,6 +312,22 @@ const char *ColorSpaceManager::colorspace_interop_id(ustring colorspace)
   return nullptr;
 }
 
+#ifdef WITH_OCIO
+/* Colorspace that a file rule other than the config's catch-all default assigns to the path,
+ * or null when there is none or the config does not define it. */
+static const char *file_rule_colorspace(const OCIO::ConstConfigRcPtr &config,
+                                        const char *file_path)
+{
+  if (!file_path[0] || config->filepathOnlyMatchesDefaultRule(file_path)) {
+    return nullptr;
+  }
+  const char *rule_colorspace = config->getColorSpaceFromFilepath(file_path);
+  return (rule_colorspace && rule_colorspace[0] && config->getColorSpace(rule_colorspace)) ?
+             rule_colorspace :
+             nullptr;
+}
+#endif
+
 ustring ColorSpaceManager::detect_known_colorspace(ustring colorspace,
                                                    const char *file_colorspace,
                                                    const char * /*file_format*/,
@@ -335,8 +351,8 @@ ustring ColorSpaceManager::detect_known_colorspace(ustring colorspace,
     }
     /* The config's file rules, unless only its catch-all default rule matches. Hosts such as
      * Houdini define their texture conventions this way. */
-    else if (file_path[0] && !config->filepathOnlyMatchesDefaultRule(file_path)) {
-      colorspace = config->getColorSpaceFromFilepath(file_path);
+    else if (const char *rule_colorspace = file_rule_colorspace(config, file_path)) {
+      colorspace = rule_colorspace;
     }
     else {
 #  if OCIO_VERSION_MAJOR == 2 && OCIO_VERSION_MINOR == 2

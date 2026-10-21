@@ -7,6 +7,8 @@
 #include "util/param.h"
 #include "util/string.h"
 
+#include <initializer_list>
+
 CCL_NAMESPACE_BEGIN
 
 /* Automatically determine colorspace. */
