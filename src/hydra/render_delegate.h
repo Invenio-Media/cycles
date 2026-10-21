@@ -97,6 +97,9 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
   // Working colorspace from UsdRenderSettings.renderingColorSpace; empty means the OCIO
   // config's scene_linear role.
   std::string _renderingColorSpace;
+  // The renderingColorSpace value last received, which differs from _renderingColorSpace
+  // when it named a colorspace the config does not have.
+  std::string _requestedColorSpace;
 
   // Makes Cycles render in this colorspace of the OCIO config; empty, or a name the config
   // does not have, means the config's scene_linear role.

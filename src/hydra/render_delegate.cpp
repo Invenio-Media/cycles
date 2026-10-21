@@ -19,12 +19,13 @@
 #include "hydra/volume.h"
 #include "scene/integrator.h"
 #include "scene/scene.h"
-#include "scene/shader.h"
 #include "session/session.h"
 #include "util/colorspace.h"
 
 #include <pxr/base/tf/getenv.h>
 #include <pxr/imaging/hgi/tokens.h>
+
+#include <mutex>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
@@ -114,6 +115,12 @@ SessionParams GetSessionParams(const HdRenderSettingsMap &settings)
   return params;
 }
 
+// Cycles' working colorspace is process-wide: every open delegate renders in the one set
+// last. Tracked so that opening a delegate with a different one can be reported.
+std::mutex g_colorSpaceMutex;
+int g_liveDelegates = 0;
+std::string g_activeColorSpace;
+
 // renderingColorSpace is a token in UsdRenderSettings; accept a string as well.
 std::string GetColorSpaceName(const VtValue &value)
 {
@@ -141,6 +148,19 @@ HdCyclesDelegate::HdCyclesDelegate(const HdRenderSettingsMap &settingsMap,
   ApplyRenderingColorSpace(colorSpaceSetting != settingsMap.end() ?
                                GetColorSpaceName(colorSpaceSetting->second) :
                                std::string());
+  {
+    const std::lock_guard<std::mutex> lock(g_colorSpaceMutex);
+    if (g_liveDelegates > 0 && g_activeColorSpace != _renderingColorSpace) {
+      TF_WARN(
+          "Cycles renderers with different rendering color spaces are open ('%s' and '%s'); "
+          "all of them now render in '%s'",
+          g_activeColorSpace.c_str(),
+          _renderingColorSpace.c_str(),
+          _renderingColorSpace.c_str());
+    }
+    g_activeColorSpace = _renderingColorSpace;
+    ++g_liveDelegates;
+  }
 
   _renderParam = session_ ? std::make_unique<HdCyclesSession>(session_, keep_nodes) :
                             std::make_unique<HdCyclesSession>(GetSessionParams(settingsMap));
@@ -160,6 +180,7 @@ HdCyclesDelegate::HdCyclesDelegate(const HdRenderSettingsMap &settingsMap,
 
 void HdCyclesDelegate::ApplyRenderingColorSpace(std::string colorSpace)
 {
+  _requestedColorSpace = colorSpace;
   if (!CCL_NS::ColorSpaceManager::set_scene_linear_colorspace(colorSpace)) {
     TF_WARN("Rendering color space '%s' is not in the OCIO config, using its scene_linear role",
             colorSpace.c_str());
@@ -169,7 +190,11 @@ void HdCyclesDelegate::ApplyRenderingColorSpace(std::string colorSpace)
   _renderingColorSpace = std::move(colorSpace);
 }
 
-HdCyclesDelegate::~HdCyclesDelegate() = default;
+HdCyclesDelegate::~HdCyclesDelegate()
+{
+  const std::lock_guard<std::mutex> lock(g_colorSpaceMutex);
+  --g_liveDelegates;
+}
 
 void HdCyclesDelegate::SetDrivers(const HdDriverVector &drivers)
 {
@@ -462,14 +487,14 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     ++_settingsVersion;
   }
   else if (key == HdCyclesRenderSettingsTokens->renderingColorSpace) {
-    // Hosts restart the renderer when this changes (UsdRenderers.json restartrendersettings),
-    // because images already converted to the old space are not reloaded.
-    std::string colorSpace = GetColorSpaceName(value);
-    if (colorSpace != _renderingColorSpace) {
-      ApplyRenderingColorSpace(std::move(colorSpace));
-      scene->shader_manager->init_xyz_transforms();
-      scene->shader_manager->tag_update(scene, ShaderManager::UPDATE_ALL);
-      ++_settingsVersion;
+    // The working colorspace is fixed when the delegate is created, because images are
+    // converted to it as they load. Hosts restart the renderer when it changes
+    // (UsdRenderers.json restartrendersettings).
+    const std::string colorSpace = GetColorSpaceName(value);
+    if (colorSpace != _requestedColorSpace) {
+      TF_WARN("Rendering color space changed to '%s'; restart the renderer to apply it",
+              colorSpace.c_str());
+      _requestedColorSpace = colorSpace;
     }
   }
   else {
@@ -508,7 +533,7 @@ VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
     return VtValue((session->params.use_sample_subset) ? session->params.sample_subset_offset : 0);
   }
   if (key == HdCyclesRenderSettingsTokens->renderingColorSpace) {
-    return VtValue(TfToken(_renderingColorSpace));
+    return _renderingColorSpace.empty() ? VtValue() : VtValue(TfToken(_renderingColorSpace));
   }
 
   const std::string &keyString = key.GetString();
