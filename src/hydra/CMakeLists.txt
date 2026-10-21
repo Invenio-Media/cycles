@@ -166,6 +166,23 @@ if(WITH_CYCLES_HYDRA_RENDER_DELEGATE)
   if(HOUDINI_FOUND)
     delayed_install("${CMAKE_CURRENT_SOURCE_DIR}" "plugInfo.json" ${CYCLES_HYDRA_INSTALL_PATH}/usd_plugins)
     delayed_install("" $<TARGET_FILE:${HdCyclesPluginName}> ${CYCLES_HYDRA_INSTALL_PATH}/usd)
+
+    # The plugin is installed by copying the built file, so it gets its final rpath at build
+    # time: from dso/usd/ to the package's lib/ (Embree, OpenImageDenoise). Houdini's own
+    # libraries are found through the host process. Windows finds the DLLs through PATH, which
+    # the package file extends.
+    if(APPLE)
+      set(_hydra_install_rpath "@loader_path/../../lib")
+    elseif(UNIX)
+      set(_hydra_install_rpath "$ORIGIN/../../lib")
+    endif()
+    if(DEFINED _hydra_install_rpath)
+      set_target_properties(${HdCyclesPluginName} PROPERTIES
+        BUILD_WITH_INSTALL_RPATH ON
+        INSTALL_RPATH "${_hydra_install_rpath}"
+      )
+      unset(_hydra_install_rpath)
+    endif()
   else()
     # Put the root `plugInfo.json` one level up.
     delayed_install("${CMAKE_CURRENT_SOURCE_DIR}" "plugInfo.json" ${CYCLES_HYDRA_INSTALL_PATH})

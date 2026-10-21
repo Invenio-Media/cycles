@@ -2,7 +2,7 @@
   "env": [
     {
       "CYCLES_ROOT": {
-        "value": "@CMAKE_INSTALL_PREFIX@/houdini",
+        "value": "$HOUDINI_PACKAGE_PATH/..",
         "method": "replace"
       }
     },
