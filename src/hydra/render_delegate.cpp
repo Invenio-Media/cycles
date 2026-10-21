@@ -17,6 +17,8 @@
 #include "hydra/render_pass.h"
 #include "hydra/session.h"
 #include "hydra/volume.h"
+#include "graph/node_enum.h"
+#include "scene/film.h"
 #include "scene/integrator.h"
 #include "scene/scene.h"
 #include "scene/shader.h"
@@ -24,9 +26,11 @@
 #include "util/colorspace.h"
 
 #include <pxr/base/tf/getenv.h>
+#include <pxr/base/vt/array.h>
 #include <pxr/imaging/hgi/tokens.h>
 
 #include <mutex>
+#include <algorithm>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
@@ -66,6 +70,83 @@ const TfTokenVector kSupportedBPrimTypes = {
     _tokens->openvdbAsset,
 #endif
 };
+
+// Integrator socket names that the delegate manages itself and must not be
+// exposed or overwritten via SetRenderSetting.
+const std::unordered_set<std::string> kIntegratorExcluded = {
+    "aa_samples",
+    "use_sample_subset",
+    "sample_subset_offset",
+    "sample_subset_length",
+    "motion_blur",
+};
+
+// Film socket names exposed through cycles:film:<name>
+const std::unordered_set<std::string> kFilmSocketsExposed = {
+    "exposure",
+    "pass_alpha_threshold",
+    "filter_type",
+    "filter_width",
+    "use_approximate_shadow_catcher",
+};
+
+// Map SocketType to the USD type name used in the manifest.
+const char *SocketTypeToUsdTypeName(SocketType::Type type)
+{
+  switch (type) {
+    case SocketType::BOOLEAN:  return "bool";
+    case SocketType::INT:
+    case SocketType::UINT:     return "int";
+    case SocketType::FLOAT:    return "float";
+    case SocketType::ENUM:     return "token";
+    case SocketType::STRING:   return "string";
+    default:                   return nullptr;  // not exposed
+  }
+}
+
+// Returns the default VtValue for a socket, converting ENUM int → TfToken.
+VtValue GetSocketDefaultForManifest(const Node *node, const SocketType &socket)
+{
+  if (socket.type == SocketType::ENUM) {
+    const int defaultInt = node->get_int(socket);
+    if (socket.enum_values && socket.enum_values->exists(defaultInt)) {
+      return VtValue(TfToken((*socket.enum_values)[defaultInt].c_str()));
+    }
+    return VtValue(TfToken(""));
+  }
+  return GetNodeValue(node, socket);
+}
+
+// Returns a sorted VtStringArray of all names in an ENUM socket.
+VtStringArray GetSocketEnumTokens(const SocketType &socket)
+{
+  VtStringArray tokens;
+  if (socket.enum_values) {
+    for (auto it = socket.enum_values->begin(); it != socket.enum_values->end(); ++it) {
+      tokens.push_back(it->first.c_str());
+    }
+    std::sort(tokens.begin(), tokens.end());
+  }
+  return tokens;
+}
+
+// Build a single manifest entry dictionary.
+VtDictionary MakeManifestEntry(const std::string &label,
+                               const char *typeStr,
+                               VtValue defaultVal,
+                               bool restart,
+                               const VtStringArray *tokens = nullptr)
+{
+  VtDictionary entry;
+  entry["label"]   = VtValue(label);
+  entry["type"]    = VtValue(std::string(typeStr));
+  entry["default"] = std::move(defaultVal);
+  entry["restart"] = VtValue(restart);
+  if (tokens) {
+    entry["tokens"] = VtValue(*tokens);
+  }
+  return entry;
+}
 
 SessionParams GetSessionParams(const HdRenderSettingsMap &settings)
 {
@@ -436,30 +517,56 @@ HdAovDescriptor HdCyclesDelegate::GetDefaultAovDescriptor(const TfToken &name) c
 HdRenderSettingDescriptorList HdCyclesDelegate::GetRenderSettingDescriptors() const
 {
   Scene *const scene = _renderParam->session->scene.get();
-
   HdRenderSettingDescriptorList descriptors;
 
-  descriptors.push_back({
-      "Time Limit",
-      HdCyclesRenderSettingsTokens->timeLimit,
-      VtValue(0.0),
-  });
-  descriptors.push_back({
-      "Sample Count",
-      HdCyclesRenderSettingsTokens->samples,
-      VtValue(1024),
-  });
-  descriptors.push_back({
-      "Sample Offset",
-      HdCyclesRenderSettingsTokens->sampleOffset,
-      VtValue(0),
-  });
+  // Session scalars
+  descriptors.push_back({"Time Limit",    HdCyclesRenderSettingsTokens->timeLimit,    VtValue(0.0)});
+  descriptors.push_back({"Sample Count",  HdCyclesRenderSettingsTokens->samples,      VtValue(1024)});
+  descriptors.push_back({"Sample Offset", HdCyclesRenderSettingsTokens->sampleOffset, VtValue(0)});
+  descriptors.push_back({"Threads",       HdCyclesRenderSettingsTokens->threads,      VtValue(0)});
 
+  // Device token
+  descriptors.push_back({"Device", HdCyclesRenderSettingsTokens->device, VtValue(TfToken("AUTO"))});
+
+  // Integrator sockets (excluding delegate-managed ones)
   for (const SocketType &socket : scene->integrator->type->inputs) {
+    if (kIntegratorExcluded.count(socket.name.string())) {
+      continue;
+    }
+    if (!SocketTypeToUsdTypeName(socket.type)) {
+      continue;
+    }
     descriptors.push_back({socket.ui_name.string(),
                            TfToken("cycles:integrator:" + socket.name.string()),
-                           GetNodeValue(scene->integrator, socket)});
+                           GetSocketDefaultForManifest(scene->integrator, socket)});
   }
+
+  // Film sockets
+  for (const SocketType &socket : scene->film->type->inputs) {
+    if (!kFilmSocketsExposed.count(socket.name.string())) {
+      continue;
+    }
+    if (!SocketTypeToUsdTypeName(socket.type)) {
+      continue;
+    }
+    descriptors.push_back({socket.ui_name.string(),
+                           TfToken("cycles:film:" + socket.name.string()),
+                           GetSocketDefaultForManifest(scene->film, socket)});
+  }
+
+  // cycles:film:transparent (custom bool, not a Film node socket)
+  descriptors.push_back({"Film Transparent", HdCyclesRenderSettingsTokens->filmTransparent, VtValue(false)});
+
+  // Session restart params
+  descriptors.push_back({"Use Auto Tile", HdCyclesRenderSettingsTokens->sessionUseAutoTile, VtValue(true)});
+  descriptors.push_back({"Tile Size",     HdCyclesRenderSettingsTokens->sessionTileSize,    VtValue(2048)});
+
+  // Scene restart params
+  descriptors.push_back({"Use BVH Spatial Split", HdCyclesRenderSettingsTokens->sceneUseBvhSpatialSplit, VtValue(false)});
+  descriptors.push_back({"Use Texture Cache",      HdCyclesRenderSettingsTokens->sceneUseTextureCache,   VtValue(true)});
+  descriptors.push_back({"Auto Texture Cache",     HdCyclesRenderSettingsTokens->sceneAutoTextureCache,  VtValue(false)});
+  descriptors.push_back({"Texture Cache Path",     HdCyclesRenderSettingsTokens->sceneTextureCachePath,  VtValue(std::string(""))});
+  descriptors.push_back({"Texture Limit",          HdCyclesRenderSettingsTokens->sceneTextureLimit,      VtValue(0)});
 
   return descriptors;
 }
@@ -518,36 +625,114 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
 
 VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
 {
+  // settings_manifest ---------------------------------------------------
+  if (key == HdCyclesRenderSettingsTokens->settingsManifest) {
+    Scene *const scene = _renderParam->session->scene.get();
+    VtDictionary manifest;
+
+    manifest["cycles:samples"]      = VtValue(MakeManifestEntry("Sample Count",  "int",    VtValue(1024),           false));
+    manifest["cycles:time_limit"]   = VtValue(MakeManifestEntry("Time Limit",    "double", VtValue(0.0),            false));
+    manifest["cycles:sample_offset"]= VtValue(MakeManifestEntry("Sample Offset", "int",    VtValue(0),              false));
+    manifest["cycles:threads"]      = VtValue(MakeManifestEntry("Threads",       "int",    VtValue(0),              true));
+    {
+      static const VtStringArray kDeviceTokens = {"AUTO","CPU","METAL","CUDA","OPTIX","HIP","ONEAPI"};
+      manifest["cycles:device"] = VtValue(MakeManifestEntry("Device", "token", VtValue(TfToken("AUTO")), true, &kDeviceTokens));
+    }
+    for (const SocketType &socket : scene->integrator->type->inputs) {
+      if (kIntegratorExcluded.count(socket.name.string())) continue;
+      const char *typeStr = SocketTypeToUsdTypeName(socket.type);
+      if (!typeStr) continue;
+      VtDictionary entry;
+      entry["label"]   = VtValue(socket.ui_name.string());
+      entry["type"]    = VtValue(std::string(typeStr));
+      entry["default"] = GetSocketDefaultForManifest(scene->integrator, socket);
+      entry["restart"] = VtValue(false);
+      if (socket.type == SocketType::ENUM) {
+        entry["tokens"] = VtValue(GetSocketEnumTokens(socket));
+      }
+      manifest["cycles:integrator:" + socket.name.string()] = VtValue(entry);
+    }
+    for (const SocketType &socket : scene->film->type->inputs) {
+      if (!kFilmSocketsExposed.count(socket.name.string())) continue;
+      const char *typeStr = SocketTypeToUsdTypeName(socket.type);
+      if (!typeStr) continue;
+      VtDictionary entry;
+      entry["label"]   = VtValue(socket.ui_name.string());
+      entry["type"]    = VtValue(std::string(typeStr));
+      entry["default"] = GetSocketDefaultForManifest(scene->film, socket);
+      entry["restart"] = VtValue(false);
+      if (socket.type == SocketType::ENUM) {
+        entry["tokens"] = VtValue(GetSocketEnumTokens(socket));
+      }
+      manifest["cycles:film:" + socket.name.string()] = VtValue(entry);
+    }
+    manifest["cycles:film:transparent"]         = VtValue(MakeManifestEntry("Film Transparent",   "bool",   VtValue(false),         false));
+    manifest["cycles:session:use_auto_tile"]    = VtValue(MakeManifestEntry("Use Auto Tile",       "bool",   VtValue(true),          true));
+    manifest["cycles:session:tile_size"]        = VtValue(MakeManifestEntry("Tile Size",           "int",    VtValue(2048),          true));
+    manifest["cycles:scene:use_bvh_spatial_split"] = VtValue(MakeManifestEntry("Use BVH Spatial Split","bool", VtValue(false),       true));
+    manifest["cycles:scene:use_texture_cache"]  = VtValue(MakeManifestEntry("Use Texture Cache",   "bool",   VtValue(true),          true));
+    manifest["cycles:scene:auto_texture_cache"] = VtValue(MakeManifestEntry("Auto Texture Cache",  "bool",   VtValue(false),         true));
+    manifest["cycles:scene:texture_cache_path"] = VtValue(MakeManifestEntry("Texture Cache Path",  "string", VtValue(std::string("")),true));
+    manifest["cycles:scene:texture_limit"]      = VtValue(MakeManifestEntry("Texture Limit",       "int",    VtValue(0),             true));
+    return VtValue(manifest);
+  }
+
   Scene *const scene = _renderParam->session->scene.get();
   Session *const session = _renderParam->session;
 
-  if (key == HdCyclesRenderSettingsTokens->stageMetersPerUnit) {
+  if (key == HdCyclesRenderSettingsTokens->stageMetersPerUnit)
     return VtValue(_renderParam->GetStageMetersPerUnit());
-  }
-  if (key == HdCyclesRenderSettingsTokens->device) {
-    return VtValue(TfToken(Device::string_from_type(session->params.device.type)));
-  }
-  if (key == HdCyclesRenderSettingsTokens->threads) {
-    return VtValue(session->params.threads);
-  }
-  if (key == HdCyclesRenderSettingsTokens->timeLimit) {
-    return VtValue(session->params.time_limit);
-  }
-  if (key == HdCyclesRenderSettingsTokens->samples) {
-    return VtValue(session->params.samples);
-  }
-  if (key == HdCyclesRenderSettingsTokens->sampleOffset) {
+  if (key == HdCyclesRenderSettingsTokens->device)
+    return VtValue(TfToken(_effectiveDeviceType.empty() ?
+                           Device::string_from_type(session->params.device.type) :
+                           _effectiveDeviceType));
+  if (key == HdCyclesRenderSettingsTokens->threads)      return VtValue(session->params.threads);
+  if (key == HdCyclesRenderSettingsTokens->timeLimit)    return VtValue(session->params.time_limit);
+  if (key == HdCyclesRenderSettingsTokens->samples)      return VtValue(session->params.samples);
+  if (key == HdCyclesRenderSettingsTokens->sampleOffset)
     return VtValue((session->params.use_sample_subset) ? session->params.sample_subset_offset : 0);
-  }
-  if (key == HdCyclesRenderSettingsTokens->renderingColorSpace) {
+  if (key == HdCyclesRenderSettingsTokens->renderingColorSpace)
     return _renderingColorSpace.empty() ? VtValue() : VtValue(TfToken(_renderingColorSpace));
+  if (key == HdCyclesRenderSettingsTokens->filmTransparent)         return VtValue(_filmTransparent);
+  if (key == HdCyclesRenderSettingsTokens->sessionUseAutoTile)      return VtValue(session->params.use_auto_tile);
+  if (key == HdCyclesRenderSettingsTokens->sessionTileSize)         return VtValue(session->params.tile_size);
+  if (key == HdCyclesRenderSettingsTokens->sceneUseBvhSpatialSplit) return VtValue(scene->params.use_bvh_spatial_split);
+  if (key == HdCyclesRenderSettingsTokens->sceneUseTextureCache)    return VtValue(scene->params.use_texture_cache);
+  if (key == HdCyclesRenderSettingsTokens->sceneAutoTextureCache)   return VtValue(scene->params.auto_texture_cache);
+  if (key == HdCyclesRenderSettingsTokens->sceneTextureCachePath)   return VtValue(scene->params.texture_cache_path);
+  if (key == HdCyclesRenderSettingsTokens->sceneTextureLimit)       return VtValue(scene->params.texture_limit);
+
+  // cycles:integrator:<socket> — return enum sockets as TfToken
+  {
+    const std::string &ks = key.GetString();
+    if (ks.rfind("cycles:integrator:", 0) == 0) {
+      const ustring socketName(ks, sizeof("cycles:integrator:") - 1);
+      if (const SocketType *socket = scene->integrator->type->find_input(socketName)) {
+        if (socket->type == SocketType::ENUM) {
+          const int v = scene->integrator->get_int(*socket);
+          if (socket->enum_values && socket->enum_values->exists(v))
+            return VtValue(TfToken((*socket->enum_values)[v].c_str()));
+        }
+        return GetNodeValue(scene->integrator, *socket);
+      }
+    }
   }
 
-  const std::string &keyString = key.GetString();
-  if (keyString.rfind("cycles:integrator:", 0) == 0) {
-    const ustring socketName(keyString, sizeof("cycles:integrator:") - 1);
-    if (const SocketType *socket = scene->integrator->type->find_input(socketName)) {
-      return GetNodeValue(scene->integrator, *socket);
+  // cycles:film:<socket>
+  {
+    const std::string &ks = key.GetString();
+    if (ks.rfind("cycles:film:", 0) == 0) {
+      const ustring socketName(ks, sizeof("cycles:film:") - 1);
+      if (kFilmSocketsExposed.count(socketName.string())) {
+        if (const SocketType *socket = scene->film->type->find_input(socketName)) {
+          if (socket->type == SocketType::ENUM) {
+            const int v = scene->film->get_int(*socket);
+            if (socket->enum_values && socket->enum_values->exists(v))
+              return VtValue(TfToken((*socket->enum_values)[v].c_str()));
+          }
+          return GetNodeValue(scene->film, *socket);
+        }
+      }
     }
   }
 
