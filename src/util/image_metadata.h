@@ -31,6 +31,7 @@ class ImageMetaData {
   /* Input colorspace hints. */
   string colorspace_file_hint;
   const char *colorspace_file_format = "";
+  string colorspace_file_path;
 
   /* Input tile info. */
   bool has_tiles_and_mipmaps = false;

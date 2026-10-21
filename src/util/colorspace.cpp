@@ -315,7 +315,8 @@ const char *ColorSpaceManager::colorspace_interop_id(ustring colorspace)
 ustring ColorSpaceManager::detect_known_colorspace(ustring colorspace,
                                                    const char *file_colorspace,
                                                    const char * /*file_format*/,
-                                                   bool is_float)
+                                                   bool is_float,
+                                                   const char *file_path)
 {
 #ifdef WITH_OCIO
   OCIO::ConstConfigRcPtr config = nullptr;
@@ -331,6 +332,11 @@ ustring ColorSpaceManager::detect_known_colorspace(ustring colorspace,
   if (config && colorspace == u_colorspace_auto) {
     if (file_colorspace[0] && config->getColorSpace(file_colorspace)) {
       colorspace = file_colorspace;
+    }
+    /* The config's file rules, unless only its catch-all default rule matches. Hosts such as
+     * Houdini define their texture conventions this way. */
+    else if (file_path[0] && !config->filepathOnlyMatchesDefaultRule(file_path)) {
+      colorspace = config->getColorSpaceFromFilepath(file_path);
     }
     else {
 #  if OCIO_VERSION_MAJOR == 2 && OCIO_VERSION_MINOR == 2
@@ -351,18 +357,24 @@ ustring ColorSpaceManager::detect_known_colorspace(ustring colorspace,
       }
       const char *role_colorspace = (is_float) ? config->getRoleColorSpace(default_float_id) :
                                                  config->getRoleColorSpace(default_byte_id);
-      role_colorspace = (role_colorspace) ? role_colorspace :
-                                            config->getRoleColorSpace(default_id);
+      role_colorspace = (role_colorspace && role_colorspace[0]) ?
+                            role_colorspace :
+                            config->getRoleColorSpace(default_id);
 #  else
       const char *role_colorspace = (is_float) ? config->getRoleColorSpace("default_float") :
                                                  config->getRoleColorSpace("default_byte");
-      role_colorspace = (role_colorspace) ? role_colorspace : config->getRoleColorSpace("default");
+      role_colorspace = (role_colorspace && role_colorspace[0]) ?
+                            role_colorspace :
+                            config->getRoleColorSpace("default");
 #  endif
-      if (role_colorspace) {
+      /* Configs may define these roles as empty strings, which means unset. */
+      if (role_colorspace && role_colorspace[0]) {
         colorspace = role_colorspace;
       }
     }
   }
+#else
+  (void)file_path;
 #endif
 
   /* Fall back to simple guess if we don't have OpenColorIO. */
@@ -707,6 +719,29 @@ void ColorSpaceManager::init_fallback_config()
 #ifdef WITH_OCIO
   OCIO::SetCurrentConfig(OCIO::Config::CreateRaw());
 #endif
+}
+
+ustring ColorSpaceManager::find_colorspace(std::initializer_list<const char *> names)
+{
+#ifdef WITH_OCIO
+  try {
+    const OCIO::ConstConfigRcPtr config = get_config();
+    if (config) {
+      for (const char *name : names) {
+        /* getColorSpace() also resolves aliases and roles. */
+        if (const OCIO::ConstColorSpaceRcPtr space = config->getColorSpace(name)) {
+          return ustring(space->getName());
+        }
+      }
+    }
+  }
+  catch (const OCIO::Exception &exception) {
+    LOG_WARNING << "OCIO config error: " << exception.what();
+  }
+#else
+  (void)names;
+#endif
+  return ustring();
 }
 
 bool ColorSpaceManager::set_scene_linear_colorspace(const string &colorspace)

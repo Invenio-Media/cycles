@@ -27,11 +27,14 @@ class ColorSpaceManager {
  public:
   /* Convert used specified colorspace to a colorspace that we are able to
    * convert to and from. If the colorspace is u_colorspace_auto, we auto
-   * detect a colospace. */
+   * detect a colospace: from the file's colorspace metadata when the config
+   * knows it, else from the config's file rules for file_path, else from the
+   * config's default roles. */
   static ustring detect_known_colorspace(ustring colorspace,
                                          const char *file_colorspace,
                                          const char *file_format,
-                                         bool is_float);
+                                         bool is_float,
+                                         const char *file_path = "");
 
   /* Test if colorspace is for non-color data. */
   static bool colorspace_is_data(ustring colorspace);
@@ -65,6 +68,10 @@ class ColorSpaceManager {
    * such colorspace. Must not run during a scene update: hold the scene mutex, then rebuild
    * the shader manager's colour transforms (ShaderManager::init_xyz_transforms). */
   static bool set_scene_linear_colorspace(const string &colorspace);
+
+  /* Name of the first of these colorspaces (names or aliases) that the OpenColorIO config
+   * defines, or an empty ustring when it defines none of them. */
+  static ustring find_colorspace(std::initializer_list<const char *> names);
 
   /* Compute matrix to convert from XYZ to scene linear RGB, based on the config. */
   static Transform get_xyz_to_scene_linear_rgb();

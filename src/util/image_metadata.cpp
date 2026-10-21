@@ -124,8 +124,11 @@ size_t ImageMetaData::memory_size() const
 void ImageMetaData::finalize(const ImageAlphaType alpha_type)
 {
   /* Convert used specified color spaces to one we know how to handle. */
-  colorspace = ColorSpaceManager::detect_known_colorspace(
-      colorspace, colorspace_file_hint.c_str(), colorspace_file_format, is_float());
+  colorspace = ColorSpaceManager::detect_known_colorspace(colorspace,
+                                                          colorspace_file_hint.c_str(),
+                                                          colorspace_file_format,
+                                                          is_float(),
+                                                          colorspace_file_path.c_str());
 
   if (colorspace == u_colorspace_scene_linear || colorspace == u_colorspace_data) {
     /* Nothing to do. */
@@ -440,6 +443,7 @@ bool ImageMetaData::oiio_load_metadata(OIIO::string_view filepath, OIIO::ImageSp
 
   colorspace_file_format = in->format_name();
   colorspace_file_hint = spec.get_string_attribute("oiio:ColorSpace");
+  colorspace_file_path = filepath;
 
   is_unassociated_alpha = spec.get_int_attribute("oiio:UnassociatedAlpha", 0);
 
