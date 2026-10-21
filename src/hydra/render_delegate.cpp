@@ -611,13 +611,33 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
       ++_settingsVersion;
     }
   }
+  else if (key == HdCyclesRenderSettingsTokens->filmTransparent) {
+    const bool newVal = VtValue::Cast<bool>(value).GetWithDefault(_filmTransparent);
+    if (newVal != _filmTransparent) {
+      _filmTransparent = newVal;
+      _renderParam->filmTransparent = newVal;
+      ++_settingsVersion;
+    }
+  }
   else {
     const std::string &keyString = key.GetString();
     if (keyString.rfind("cycles:integrator:", 0) == 0) {
       const ustring socketName(keyString, sizeof("cycles:integrator:") - 1);
-      if (const SocketType *socket = scene->integrator->type->find_input(socketName)) {
-        SetNodeValue(scene->integrator, *socket, value);
-        ++_settingsVersion;
+      if (!kIntegratorExcluded.count(socketName.string())) {
+        if (const SocketType *socket = scene->integrator->type->find_input(socketName)) {
+          SetNodeValue(scene->integrator, *socket, value);
+          ++_settingsVersion;
+        }
+      }
+    }
+    else if (keyString.rfind("cycles:film:", 0) == 0) {
+      const ustring socketName(keyString, sizeof("cycles:film:") - 1);
+      if (kFilmSocketsExposed.count(socketName.string())) {
+        if (const SocketType *socket = scene->film->type->find_input(socketName)) {
+          SetNodeValue(scene->film, *socket, value);
+          scene->film->tag_modified();
+          ++_settingsVersion;
+        }
       }
     }
   }
