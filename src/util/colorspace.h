@@ -62,7 +62,8 @@ class ColorSpaceManager {
   /* Render in this colorspace of the current OpenColorIO config instead of the config's
    * scene_linear role, without changing the process-wide current config. An empty name goes
    * back to the role. Returns false, and keeps the previous choice, when the config has no
-   * such colorspace. Must not be called while rendering. */
+   * such colorspace. Must not run during a scene update: hold the scene mutex, then rebuild
+   * the shader manager's colour transforms (ShaderManager::init_xyz_transforms). */
   static bool set_scene_linear_colorspace(const string &colorspace);
 
   /* Compute matrix to convert from XYZ to scene linear RGB, based on the config. */
