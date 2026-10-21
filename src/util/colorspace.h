@@ -59,6 +59,12 @@ class ColorSpaceManager {
    * valid without knowing the actual configuration used by the final application. */
   static void init_fallback_config();
 
+  /* Render in this colorspace of the current OpenColorIO config instead of the config's
+   * scene_linear role, without changing the process-wide current config. An empty name goes
+   * back to the role. Returns false, and keeps the previous choice, when the config has no
+   * such colorspace. Must not be called while rendering. */
+  static bool set_scene_linear_colorspace(const string &colorspace);
+
   /* Compute matrix to convert from XYZ to scene linear RGB, based on the config. */
   static Transform get_xyz_to_scene_linear_rgb();
   static Transform get_xyz_to_rec709();

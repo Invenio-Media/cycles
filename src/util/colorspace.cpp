@@ -43,6 +43,32 @@ static bool cache_scene_linear_interop_id_done = false;
 static const char *cache_scene_linear_interop_id = "";
 static const char *cache_scene_linear_srgb_interop_id = "";
 
+/* Scene linear override from set_scene_linear_colorspace(). The edited copy of the current
+ * config is rebuilt when the current config itself changes. */
+static thread_mutex scene_linear_override_mutex;
+static string scene_linear_override;
+static OCIO::ConstConfigRcPtr scene_linear_override_base;
+static OCIO::ConstConfigRcPtr scene_linear_override_config;
+
+/* The config Cycles converts with: the current config, with the scene_linear role replaced
+ * when an override is set. May throw OCIO::Exception, like OCIO::GetCurrentConfig(). */
+static OCIO::ConstConfigRcPtr get_config()
+{
+  OCIO::ConstConfigRcPtr config = OCIO::GetCurrentConfig();
+
+  const thread_scoped_lock lock(scene_linear_override_mutex);
+  if (!config || scene_linear_override.empty()) {
+    return config;
+  }
+  if (config != scene_linear_override_base) {
+    OCIO::ConfigRcPtr edited = config->createEditableCopy();
+    edited->setRole(OCIO::ROLE_SCENE_LINEAR, scene_linear_override.c_str());
+    scene_linear_override_base = config;
+    scene_linear_override_config = edited;
+  }
+  return scene_linear_override_config;
+}
+
 static void check_invalidate_caches()
 {
   static thread_mutex cache_scene_linear_mutex;
@@ -54,7 +80,7 @@ static void check_invalidate_caches()
   const thread_scoped_lock cache_scene_linear_lock(cache_scene_linear_mutex);
   OCIO::ConstConfigRcPtr config = nullptr;
   try {
-    config = OCIO::GetCurrentConfig();
+    config = get_config();
   }
   catch (const OCIO::Exception &exception) {
     LOG_ERROR << "OCIO config error: " << exception.what();
@@ -98,7 +124,7 @@ ColorSpaceProcessor *ColorSpaceManager::get_processor(ustring colorspace)
 
   OCIO::ConstConfigRcPtr config = nullptr;
   try {
-    config = OCIO::GetCurrentConfig();
+    config = get_config();
   }
   catch (const OCIO::Exception &exception) {
     LOG_WARNING << "OCIO config error: " << exception.what();
@@ -182,7 +208,7 @@ bool ColorSpaceManager::colorspace_is_data(ustring colorspace)
 #ifdef WITH_OCIO
   OCIO::ConstConfigRcPtr config = nullptr;
   try {
-    config = OCIO::GetCurrentConfig();
+    config = get_config();
   }
   catch (const OCIO::Exception &exception) {
     LOG_WARNING << "OCIO config error: " << exception.what();
@@ -232,7 +258,7 @@ const char *ColorSpaceManager::colorspace_interop_id(ustring colorspace)
 #ifdef WITH_OCIO
   OCIO::ConstConfigRcPtr config = nullptr;
   try {
-    config = OCIO::GetCurrentConfig();
+    config = get_config();
     if (!config) {
       return nullptr;
     }
@@ -294,7 +320,7 @@ ustring ColorSpaceManager::detect_known_colorspace(ustring colorspace,
 #ifdef WITH_OCIO
   OCIO::ConstConfigRcPtr config = nullptr;
   try {
-    config = OCIO::GetCurrentConfig();
+    config = get_config();
   }
   catch (const OCIO::Exception &exception) {
     LOG_WARNING << "OCIO config error: " << exception.what();
@@ -683,6 +709,45 @@ void ColorSpaceManager::init_fallback_config()
 #endif
 }
 
+bool ColorSpaceManager::set_scene_linear_colorspace(const string &colorspace)
+{
+#ifdef WITH_OCIO
+  string name;
+  if (!colorspace.empty()) {
+    try {
+      const OCIO::ConstConfigRcPtr config = OCIO::GetCurrentConfig();
+      const OCIO::ConstColorSpaceRcPtr space = config ? config->getColorSpace(colorspace.c_str()) :
+                                                        nullptr;
+      if (!space) {
+        LOG_WARNING << "Colorspace " << colorspace << " not found in the OCIO config";
+        return false;
+      }
+      /* Resolve aliases and roles to the colorspace name the role has to point at. */
+      name = space->getName();
+    }
+    catch (const OCIO::Exception &exception) {
+      LOG_WARNING << "OCIO config error: " << exception.what();
+      return false;
+    }
+  }
+
+  {
+    const thread_scoped_lock lock(scene_linear_override_mutex);
+    scene_linear_override = name;
+    scene_linear_override_base = nullptr;
+    scene_linear_override_config = nullptr;
+  }
+  /* Drops processors and matrices built for the previous scene linear colorspace. */
+  check_invalidate_caches();
+
+  LOG_INFO << "Scene linear colorspace: "
+           << (name.empty() ? "scene_linear role of the OCIO config" : name);
+  return true;
+#else
+  return colorspace.empty();
+#endif
+}
+
 #ifdef WITH_OCIO
 static bool to_scene_linear_transform(OCIO::ConstConfigRcPtr &config,
                                       const char *colorspace,
@@ -772,7 +837,7 @@ Transform ColorSpaceManager::get_xyz_to_scene_linear_rgb()
   /* Get from OpenColorO config if it has the required roles. */
   OCIO::ConstConfigRcPtr config = nullptr;
   try {
-    config = OCIO::GetCurrentConfig();
+    config = get_config();
   }
   catch (OCIO::Exception &exception) {
     LOG_WARNING << "OCIO config error: " << exception.what();
