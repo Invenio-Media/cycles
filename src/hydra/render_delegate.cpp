@@ -519,6 +519,7 @@ bool HdCyclesDelegate::Resume()
 HdRenderPassSharedPtr HdCyclesDelegate::CreateRenderPass(HdRenderIndex *index,
                                                          const HdRprimCollection &collection)
 {
+  ++_renderPassCount;
   return HdRenderPassSharedPtr(new HdCyclesRenderPass(index, collection, _renderParam.get()));
 }
 

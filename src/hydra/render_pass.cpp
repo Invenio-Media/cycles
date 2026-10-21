@@ -49,6 +49,12 @@ HdCyclesRenderPass::~HdCyclesRenderPass()
 {
   Session *const session = _renderParam->session;
   session->cancel(true);
+  // Keep the delegate's live-render-pass counter accurate so that CanRebuildSession()
+  // does not permit a Session swap while a render pass still holds _renderParam.
+  if (auto *const rd = static_cast<HdCyclesDelegate *>(
+          GetRenderIndex()->GetRenderDelegate())) {
+    rd->NotifyRenderPassDestroyed();
+  }
 }
 
 bool HdCyclesRenderPass::IsConverged() const
