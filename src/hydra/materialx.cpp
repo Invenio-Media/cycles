@@ -176,7 +176,8 @@ std::optional<float> FoldUnary(const std::string &op, const float a)
       {"absolute", [](const float x) { return std::fabs(x); }},
       {"floor", [](const float x) { return std::floor(x); }},
       {"ceil", [](const float x) { return std::ceil(x); }},
-      {"round", [](const float x) { return std::round(x); }},
+      /* As Cycles rounds: halves up, -0.5 to 0. */
+      {"round", [](const float x) { return std::floor(x + 0.5f); }},
       {"sign", [](const float x) { return float((x > 0.0f) - (x < 0.0f)); }},
       {"sine", [](const float x) { return std::sin(x); }},
       {"cosine", [](const float x) { return std::cos(x); }},
@@ -497,7 +498,8 @@ void MaterialXTranslator::ReadInputs(const SdrShaderNodeConstPtr &sdrNode)
     const SdrShaderPropertyConstPtr input = sdrNode->GetShaderInput(name);
     VtValue value = _network.GetNodeParameterValue(_node, name);
     if (!value.IsEmpty()) {
-      if (!input || value != input->GetDefaultValue()) {
+      /* Compared as Cycles takes them, so a double authored at a float default is unset. */
+      if (!input || ToCycles(value) != ToCycles(input->GetDefaultValue())) {
         _setInputs.insert(name);
       }
     }
