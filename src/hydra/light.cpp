@@ -88,12 +88,11 @@ void HdCyclesLight::Sync(HdSceneDelegate *sceneDelegate,
     strength *= exp2(GetTypedValue<float>(lightDs, HdLightTokens->exposure, 0.0f));
     strength *= GetTypedValue<float>(lightDs, HdLightTokens->intensity, 1.0f);
 
-    if (_lightType == HdPrimTypeTokens->distantLight) {
-      /* Unclear why, but approximately matches Karma. */
-      strength *= 4.0f;
-    }
-    else {
-      /* Convert from intensity to radiant flux. */
+    // UsdLux intensities, as Karma renders them. A Cycles sun's strength is already the
+    // irradiance (normalized) or the disk's radiance, and a background's strength is its
+    // radiance. Cycles' point, spot and area lights take radiant flux.
+    if (_lightType != HdPrimTypeTokens->distantLight && _lightType != HdPrimTypeTokens->domeLight)
+    {
       strength *= M_PI_F;
     }
 
