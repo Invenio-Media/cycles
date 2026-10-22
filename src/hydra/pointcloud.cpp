@@ -158,8 +158,9 @@ void HdCyclesPoints::PopulatePrimvars(HdSceneDelegate *sceneDelegate)
         }
       }
 
-      // Skip attributes that are not needed
-      if ((std != ATTR_STD_NONE && _geom->need_attribute(scene, std)) ||
+      // Skip attributes that are not needed. Texture coordinates are always kept: the UV
+      // pass needs them, and passes are created after rprims sync.
+      if (std == ATTR_STD_UV || (std != ATTR_STD_NONE && _geom->need_attribute(scene, std)) ||
           _geom->need_attribute(scene, name))
       {
         ApplyPrimvars(_geom->attributes, name, value, interpolation.second, std);
