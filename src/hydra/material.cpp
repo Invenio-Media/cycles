@@ -14,7 +14,10 @@
 #include "util/colorspace.h"
 #include "util/path.h"
 
+#include <algorithm>
 #include <filesystem>
+#include <string_view>
+#include <vector>
 
 #include <pxr/imaging/hd/material.h>
 #include <pxr/imaging/hd/materialConnectionSchema.h>
@@ -441,17 +444,19 @@ std::string StructuralKey(HdMaterialNetworkSchema network)
 }
 
 /* The UDIM tiles on disk for a filename with a <UDIM> token, in order; none without the token.
- * Cycles loads only the tiles an image texture node lists. */
+ * Cycles loads only the tiles an image texture node lists. Tiles are looked up when the
+ * material syncs, so tiles added on disk later need the material to sync again. */
 array<int> FindUdimTiles(const string &filename)
 {
+  constexpr std::string_view udim = "<UDIM>";
   array<int> tiles;
   const string name = path_filename(filename);
-  const size_t token = name.find("<UDIM>");
+  const size_t token = name.find(udim);
   if (token == string::npos) {
     return tiles;
   }
   const string prefix = name.substr(0, token);
-  const string suffix = name.substr(token + strlen("<UDIM>"));
+  const string suffix = name.substr(token + udim.size());
 
   std::vector<int> found;
   std::error_code error;
@@ -464,9 +469,15 @@ array<int> FindUdimTiles(const string &filename)
     {
       continue;
     }
-    const string digits = candidate.substr(prefix.size(), 4);
-    if (std::all_of(digits.begin(), digits.end(), ::isdigit) && std::stoi(digits) >= 1001) {
-      found.push_back(std::stoi(digits));
+    int tile = 0;
+    for (const char c : candidate.substr(prefix.size(), 4)) {
+      tile = (c >= '0' && c <= '9') ? tile * 10 + (c - '0') : -1;
+      if (tile < 0) {
+        break;
+      }
+    }
+    if (tile >= 1001) {
+      found.push_back(tile);
     }
   }
   std::sort(found.begin(), found.end());
