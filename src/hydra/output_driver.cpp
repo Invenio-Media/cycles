@@ -19,6 +19,7 @@ void HdCyclesOutputDriver::write_render_tile(const Tile &tile)
   update_render_tile(tile);
 
   // Update convergence state of all render buffers
+  const thread_scoped_lock lock(_renderParam->GetAovMutex());
   for (const HdRenderPassAovBinding &aovBinding : _renderParam->GetAovBindings()) {
     if (auto *const renderBuffer = static_cast<HdCyclesRenderBuffer *>(aovBinding.renderBuffer)) {
       renderBuffer->SetConverged(true);
@@ -30,9 +31,11 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
 {
   std::vector<float> pixels;
 
+  // SyncAovBindings sets both vectors together under this lock, so they have the same size.
+  const thread_scoped_lock lock(_renderParam->GetAovMutex());
   const HdRenderPassAovBindingVector &aovBindings = _renderParam->GetAovBindings();
   const std::vector<HdCyclesAovPass> &aovPasses = _renderParam->GetAovPasses();
-  for (size_t i = 0; i < std::min(aovBindings.size(), aovPasses.size()); ++i) {
+  for (size_t i = 0; i < aovBindings.size(); ++i) {
     const HdRenderPassAovBinding &aovBinding = aovBindings[i];
     const HdCyclesAovPass &aovPass = aovPasses[i];
     if (auto *const renderBuffer = static_cast<HdCyclesRenderBuffer *>(aovBinding.renderBuffer)) {

@@ -70,7 +70,16 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
 
   void SetDisplayAovBinding(const PXR_NS::HdRenderPassAovBinding &aovBinding)
   {
+    const CCL_NS::thread_scoped_lock lock(_aovMutex);
     _displayAovBinding = aovBinding;
+  }
+
+  // Cycles' render thread reads the bindings through the output driver while Hydra changes
+  // them; it holds this lock while it does. Hydra's thread changes them only through the
+  // methods here, which take the lock.
+  CCL_NS::thread_mutex &GetAovMutex() const
+  {
+    return _aovMutex;
   }
 
   const PXR_NS::HdRenderPassAovBindingVector &GetAovBindings() const
@@ -101,6 +110,7 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   PXR_NS::HdRenderPassAovBindingVector _aovBindings;
   std::vector<HdCyclesAovPass> _aovPasses;
   PXR_NS::HdRenderPassAovBinding _displayAovBinding;
+  mutable CCL_NS::thread_mutex _aovMutex;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

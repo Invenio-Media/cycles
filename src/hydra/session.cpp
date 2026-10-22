@@ -213,6 +213,7 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
   // Update passes with requested AOV bindings. Cycles writes one pass per type, so bindings
   // of the same type (aliases such as "C" and "color") share a pass, named after the type. A
   // shader AOV pass is named after the AOV output node that writes it.
+  const thread_scoped_lock lock(_aovMutex);
   _aovBindings = aovBindings;
   _aovPasses.assign(aovBindings.size(), HdCyclesAovPass());
   std::unordered_set<std::string> createdPasses;
@@ -246,6 +247,7 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
 
 void HdCyclesSession::RemoveAovBinding(HdRenderBuffer *renderBuffer)
 {
+  const thread_scoped_lock lock(_aovMutex);
   for (HdRenderPassAovBinding &aovBinding : _aovBindings) {
     if (renderBuffer == aovBinding.renderBuffer) {
       aovBinding.renderBuffer = nullptr;
