@@ -137,23 +137,6 @@ VtStringArray GetSocketEnumTokens(const SocketType &socket)
   return tokens;
 }
 
-// Build a single manifest entry VtDictionary.
-VtDictionary MakeManifestEntry(const std::string &label,
-                               const char *typeStr,
-                               VtValue defaultVal,
-                               bool restart,
-                               const VtStringArray *tokens = nullptr)
-{
-  VtDictionary entry;
-  entry["label"] = VtValue(label);
-  entry["type"] = VtValue(std::string(typeStr));
-  entry["default"] = std::move(defaultVal);
-  entry["restart"] = VtValue(restart);
-  if (tokens) {
-    entry["tokens"] = VtValue(*tokens);
-  }
-  return entry;
-}
 
 // Cycles' working colorspace is process-wide: every open delegate renders in the one set
 // last. Tracked so that a delegate switching to a different one can be reported.
@@ -173,6 +156,50 @@ std::string GetColorSpaceName(const VtValue &value)
   return std::string();
 }
 
+// One canonical descriptor for every non-integrator render setting.
+// Integrator sockets are dynamic (from the node type) and handled separately.
+struct HdCyclesSettingDesc {
+  TfToken key;
+  const char *label;
+  const char *typeName;  // "bool"|"int"|"float"|"double"|"token"|"string"
+  VtValue defaultVal;
+  VtStringArray tokens;  // populated only for token-typed settings
+  bool restart;          // true: requires a new Session to take effect
+};
+
+const std::vector<HdCyclesSettingDesc> &GetSettingsTable()
+{
+  // Static so we pay the construction cost only once; the token values are runtime
+  // constants initialised before any delegate is created.
+  static const std::vector<HdCyclesSettingDesc> kTable = {
+      // Session scalars
+      {HdCyclesRenderSettingsTokens->samples,      "Sample Count",  "int",    VtValue(1024),                 {}, false},
+      {HdCyclesRenderSettingsTokens->timeLimit,    "Time Limit",    "double", VtValue(0.0),                  {}, false},
+      {HdCyclesRenderSettingsTokens->sampleOffset, "Sample Offset", "int",    VtValue(0),                    {}, false},
+      {HdCyclesRenderSettingsTokens->threads,      "Threads",       "int",    VtValue(0),                    {}, true},
+      {HdCyclesRenderSettingsTokens->device,       "Device",        "token",  VtValue(TfToken("AUTO")),
+          VtStringArray{"AUTO","CPU","METAL","CUDA","OPTIX","HIP","ONEAPI"}, true},
+      // Film sockets (hardcoded defaults match Cycles Film node defaults)
+      {HdCyclesRenderSettingsTokens->filmExposure,                "Exposure",                       "float",  VtValue(1.0f),                 {}, false},
+      {HdCyclesRenderSettingsTokens->filmPassAlphaThreshold,      "Pass Alpha Threshold",           "float",  VtValue(0.5f),                 {}, false},
+      {HdCyclesRenderSettingsTokens->filmFilterType,              "Filter Type",                    "token",  VtValue(TfToken("box")),
+          VtStringArray{"blackman_harris","box","gaussian"}, false},
+      {HdCyclesRenderSettingsTokens->filmFilterWidth,             "Filter Width",                   "float",  VtValue(1.0f),                 {}, false},
+      {HdCyclesRenderSettingsTokens->filmUseApproxShadowCatcher, "Use Approximate Shadow Catcher",  "bool",   VtValue(false),                {}, false},
+      // Film transparent (custom, not a Film node socket)
+      {HdCyclesRenderSettingsTokens->filmTransparent,            "Film Transparent",                "bool",   VtValue(false),                {}, false},
+      // Session restart params
+      {HdCyclesRenderSettingsTokens->sessionUseAutoTile, "Use Auto Tile", "bool", VtValue(true),             {}, true},
+      {HdCyclesRenderSettingsTokens->sessionTileSize,    "Tile Size",     "int",  VtValue(2048),             {}, true},
+      // Scene restart params
+      {HdCyclesRenderSettingsTokens->sceneUseBvhSpatialSplit, "Use BVH Spatial Split", "bool",   VtValue(false),           {}, true},
+      {HdCyclesRenderSettingsTokens->sceneUseTextureCache,    "Use Texture Cache",     "bool",   VtValue(true),            {}, true},
+      {HdCyclesRenderSettingsTokens->sceneAutoTextureCache,   "Auto Texture Cache",    "bool",   VtValue(false),           {}, true},
+      {HdCyclesRenderSettingsTokens->sceneTextureCachePath,   "Texture Cache Path",    "string", VtValue(std::string("")), {}, true},
+      {HdCyclesRenderSettingsTokens->sceneTextureLimit,       "Texture Limit",         "int",    VtValue(0),               {}, true},
+  };
+  return kTable;
+}
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -322,15 +349,12 @@ bool HdCyclesDelegate::CanRebuildSession() const
 
 static bool IsRestartOnlyKey(const TfToken &key)
 {
-  return key == HdCyclesRenderSettingsTokens->device ||
-         key == HdCyclesRenderSettingsTokens->threads ||
-         key == HdCyclesRenderSettingsTokens->sessionUseAutoTile ||
-         key == HdCyclesRenderSettingsTokens->sessionTileSize ||
-         key == HdCyclesRenderSettingsTokens->sceneUseBvhSpatialSplit ||
-         key == HdCyclesRenderSettingsTokens->sceneUseTextureCache ||
-         key == HdCyclesRenderSettingsTokens->sceneAutoTextureCache ||
-         key == HdCyclesRenderSettingsTokens->sceneTextureCachePath ||
-         key == HdCyclesRenderSettingsTokens->sceneTextureLimit;
+  for (const HdCyclesSettingDesc &desc : GetSettingsTable()) {
+    if (desc.key == key) {
+      return desc.restart;
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -751,78 +775,25 @@ HdAovDescriptor HdCyclesDelegate::GetDefaultAovDescriptor(const TfToken &name) c
 HdRenderSettingDescriptorList HdCyclesDelegate::GetRenderSettingDescriptors() const
 {
   Scene *const scene = _renderParam->session->scene.get();
-
   HdRenderSettingDescriptorList descriptors;
 
-  // Session settings
-  descriptors.push_back({"Time Limit", HdCyclesRenderSettingsTokens->timeLimit, VtValue(0.0)});
-  descriptors.push_back(
-      {"Sample Count", HdCyclesRenderSettingsTokens->samples, VtValue(1024)});
-  descriptors.push_back(
-      {"Sample Offset", HdCyclesRenderSettingsTokens->sampleOffset, VtValue(0)});
-  descriptors.push_back({"Threads", HdCyclesRenderSettingsTokens->threads, VtValue(0)});
+  // Non-integrator settings from the canonical table.
+  for (const HdCyclesSettingDesc &desc : GetSettingsTable()) {
+    descriptors.push_back({desc.label, desc.key, desc.defaultVal});
+  }
 
-  // Device token — defaults and tokens are in the manifest; descriptor needs only the default.
-  descriptors.push_back(
-      {"Device", HdCyclesRenderSettingsTokens->device, VtValue(TfToken("AUTO"))});
-
-  // Integrator sockets
+  // Integrator sockets are dynamic (from the node type).
   for (const SocketType &socket : scene->integrator->type->inputs) {
     if (kIntegratorExcluded.count(socket.name.string())) {
       continue;
     }
-    const char *typeStr = SocketTypeToUsdTypeName(socket.type);
-    if (!typeStr) {
-      continue;  // Skip non-scalar / unsupported socket types
-    }
-    descriptors.push_back(
-        {socket.ui_name.string(),
-         TfToken("cycles:integrator:" + socket.name.string()),
-         GetSocketDefaultForManifest(scene->integrator, socket)});
-  }
-
-  // Film sockets
-  for (const SocketType &socket : scene->film->type->inputs) {
-    if (!kFilmSocketsExposed.count(socket.name.string())) {
+    if (!SocketTypeToUsdTypeName(socket.type)) {
       continue;
     }
-    const char *typeStr = SocketTypeToUsdTypeName(socket.type);
-    if (!typeStr) {
-      continue;
-    }
-    descriptors.push_back(
-        {socket.ui_name.string(),
-         TfToken("cycles:film:" + socket.name.string()),
-         GetSocketDefaultForManifest(scene->film, socket)});
+    descriptors.push_back({socket.ui_name.string(),
+                           TfToken("cycles:integrator:" + socket.name.string()),
+                           GetSocketDefaultForManifest(scene->integrator, socket)});
   }
-
-  // cycles:film:transparent (not a Film node socket)
-  descriptors.push_back({"Film Transparent",
-                          HdCyclesRenderSettingsTokens->filmTransparent,
-                          VtValue(false)});
-
-  // Session restart params
-  descriptors.push_back({"Use Auto Tile",
-                          HdCyclesRenderSettingsTokens->sessionUseAutoTile,
-                          VtValue(true)});
-  descriptors.push_back(
-      {"Tile Size", HdCyclesRenderSettingsTokens->sessionTileSize, VtValue(2048)});
-
-  // Scene restart params
-  descriptors.push_back({"Use BVH Spatial Split",
-                          HdCyclesRenderSettingsTokens->sceneUseBvhSpatialSplit,
-                          VtValue(false)});
-  descriptors.push_back({"Use Texture Cache",
-                          HdCyclesRenderSettingsTokens->sceneUseTextureCache,
-                          VtValue(true)});
-  descriptors.push_back({"Auto Texture Cache",
-                          HdCyclesRenderSettingsTokens->sceneAutoTextureCache,
-                          VtValue(false)});
-  descriptors.push_back({"Texture Cache Path",
-                          HdCyclesRenderSettingsTokens->sceneTextureCachePath,
-                          VtValue(std::string(""))});
-  descriptors.push_back(
-      {"Texture Limit", HdCyclesRenderSettingsTokens->sceneTextureLimit, VtValue(0)});
 
   return descriptors;
 }
@@ -975,24 +946,20 @@ VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
     Scene *const scene = _renderParam->session->scene.get();
     VtDictionary manifest;
 
-    // Session settings
-    manifest["cycles:samples"] = VtValue(MakeManifestEntry("Sample Count", "int",
-                                                             VtValue(1024), false));
-    manifest["cycles:time_limit"] = VtValue(MakeManifestEntry("Time Limit", "double",
-                                                               VtValue(0.0), false));
-    manifest["cycles:sample_offset"] = VtValue(MakeManifestEntry("Sample Offset", "int",
-                                                                   VtValue(0), false));
-    manifest["cycles:threads"] = VtValue(MakeManifestEntry("Threads", "int",
-                                                             VtValue(0), true));
-    {
-      static const VtStringArray kDeviceTokens = {
-          "AUTO", "CPU", "METAL", "CUDA", "OPTIX", "HIP", "ONEAPI"};
-      manifest["cycles:device"] = VtValue(MakeManifestEntry("Device", "token",
-                                                              VtValue(TfToken("AUTO")), true,
-                                                              &kDeviceTokens));
+    // Non-integrator settings from the canonical table.
+    for (const HdCyclesSettingDesc &desc : GetSettingsTable()) {
+      VtDictionary entry;
+      entry["label"]   = VtValue(std::string(desc.label));
+      entry["type"]    = VtValue(std::string(desc.typeName));
+      entry["default"] = desc.defaultVal;
+      entry["restart"] = VtValue(desc.restart);
+      if (!desc.tokens.empty()) {
+        entry["tokens"] = VtValue(desc.tokens);
+      }
+      manifest[desc.key.GetString()] = VtValue(entry);
     }
 
-    // Integrator sockets
+    // Integrator sockets are dynamic (from the node type).
     for (const SocketType &socket : scene->integrator->type->inputs) {
       if (kIntegratorExcluded.count(socket.name.string())) {
         continue;
@@ -1001,62 +968,16 @@ VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
       if (!typeStr) {
         continue;
       }
-      VtValue defaultVal = GetSocketDefaultForManifest(scene->integrator, socket);
-      const std::string settingKey = "cycles:integrator:" + socket.name.string();
       VtDictionary entry;
-      entry["label"] = VtValue(socket.ui_name.string());
-      entry["type"] = VtValue(std::string(typeStr));
-      entry["default"] = std::move(defaultVal);
+      entry["label"]   = VtValue(socket.ui_name.string());
+      entry["type"]    = VtValue(std::string(typeStr));
+      entry["default"] = GetSocketDefaultForManifest(scene->integrator, socket);
       entry["restart"] = VtValue(false);
       if (socket.type == SocketType::ENUM) {
         entry["tokens"] = VtValue(GetSocketEnumTokens(socket));
       }
-      manifest[settingKey] = VtValue(entry);
+      manifest["cycles:integrator:" + socket.name.string()] = VtValue(entry);
     }
-
-    // Film sockets
-    for (const SocketType &socket : scene->film->type->inputs) {
-      if (!kFilmSocketsExposed.count(socket.name.string())) {
-        continue;
-      }
-      const char *typeStr = SocketTypeToUsdTypeName(socket.type);
-      if (!typeStr) {
-        continue;
-      }
-      VtValue defaultVal = GetSocketDefaultForManifest(scene->film, socket);
-      const std::string settingKey = "cycles:film:" + socket.name.string();
-      VtDictionary entry;
-      entry["label"] = VtValue(socket.ui_name.string());
-      entry["type"] = VtValue(std::string(typeStr));
-      entry["default"] = std::move(defaultVal);
-      entry["restart"] = VtValue(false);
-      if (socket.type == SocketType::ENUM) {
-        entry["tokens"] = VtValue(GetSocketEnumTokens(socket));
-      }
-      manifest[settingKey] = VtValue(entry);
-    }
-
-    // cycles:film:transparent (custom, not a Film node socket)
-    manifest["cycles:film:transparent"] = VtValue(
-        MakeManifestEntry("Film Transparent", "bool", VtValue(false), false));
-
-    // Session restart params
-    manifest["cycles:session:use_auto_tile"] = VtValue(
-        MakeManifestEntry("Use Auto Tile", "bool", VtValue(true), true));
-    manifest["cycles:session:tile_size"] = VtValue(
-        MakeManifestEntry("Tile Size", "int", VtValue(2048), true));
-
-    // Scene restart params
-    manifest["cycles:scene:use_bvh_spatial_split"] = VtValue(
-        MakeManifestEntry("Use BVH Spatial Split", "bool", VtValue(false), true));
-    manifest["cycles:scene:use_texture_cache"] = VtValue(
-        MakeManifestEntry("Use Texture Cache", "bool", VtValue(true), true));
-    manifest["cycles:scene:auto_texture_cache"] = VtValue(
-        MakeManifestEntry("Auto Texture Cache", "bool", VtValue(false), true));
-    manifest["cycles:scene:texture_cache_path"] = VtValue(
-        MakeManifestEntry("Texture Cache Path", "string", VtValue(std::string("")), true));
-    manifest["cycles:scene:texture_limit"] = VtValue(
-        MakeManifestEntry("Texture Limit", "int", VtValue(0), true));
 
     return VtValue(manifest);
   }
