@@ -74,7 +74,10 @@ template<> ustring convertToCycles<ustring>(const VtValue &value)
   }
   if (value.IsHolding<SdfAssetPath>()) {
     const SdfAssetPath &path = value.UncheckedGet<SdfAssetPath>();
-    return ustring(path.GetResolvedPath());
+    /* A path that does not resolve, such as a missing file, keeps its authored form, so that
+     * Cycles' warning about it names the file. */
+    return ustring(path.GetResolvedPath().empty() ? path.GetAssetPath() :
+                                                    path.GetResolvedPath());
   }
 
   if (value.CanCast<TfToken>()) {
