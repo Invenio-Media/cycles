@@ -746,7 +746,19 @@ HdAovDescriptor HdCyclesDelegate::GetDefaultAovDescriptor(const TfToken &name) c
     return HdAovDescriptor(HdFormatInt32, false, VtValue(-1));
   }
 
-  return HdAovDescriptor();
+  // Any other pass in the AOV table: float channels, as many as the Cycles pass has.
+  const PassType type = HdCyclesPassTypeForAov(name);
+  if (type == PASS_NONE) {
+    return HdAovDescriptor();
+  }
+  switch (Pass::get_info(type).num_components) {
+    case 1:
+      return HdAovDescriptor(HdFormatFloat32, false, VtValue(0.0f));
+    case 3:
+      return HdAovDescriptor(HdFormatFloat32Vec3, false, VtValue(GfVec3f(0.0f)));
+    default:
+      return HdAovDescriptor(HdFormatFloat32Vec4, false, VtValue(GfVec4f(0.0f)));
+  }
 }
 
 // Render settings descriptors

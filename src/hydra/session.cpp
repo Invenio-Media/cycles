@@ -14,6 +14,8 @@
 #include "scene/shader_nodes.h"
 #include "session/session.h"
 
+#include <unordered_set>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 namespace {
@@ -24,15 +26,69 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
 );
 // clang-format on
 
+// RenderVar source names, and the Hydra AOV names hosts use without a RenderVar, mapped to
+// Cycles passes. Short names (C, N, P) are the usual RenderVar names in Solaris. Diffuse,
+// glossy and transmission come as direct, indirect and color components only: Cycles' totals
+// for them are lighting without the color, where other Solaris renderers' "diffuse" is the
+// contribution to the beauty.
 const std::unordered_map<TfToken, PassType, TfToken::HashFunctor> kAovToPass = {
     {HdAovTokens->color, PASS_COMBINED},
+    {TfToken("C"), PASS_COMBINED},
     {HdAovTokens->depth, PASS_DEPTH},
     {HdAovTokens->normal, PASS_NORMAL},
+    {TfToken("N"), PASS_NORMAL},
+    {TfToken("position"), PASS_POSITION},
+    {TfToken("P"), PASS_POSITION},
+    {TfToken("roughness"), PASS_ROUGHNESS},
+    {TfToken("uv"), PASS_UV},
+    {TfToken("mist"), PASS_MIST},
+    {TfToken("albedo"), PASS_DENOISING_ALBEDO},
+    {TfToken("emission"), PASS_EMISSION},
+    {TfToken("background"), PASS_BACKGROUND},
+    {TfToken("ao"), PASS_AO},
+    {TfToken("diffuse_direct"), PASS_DIFFUSE_DIRECT},
+    {TfToken("diffuse_indirect"), PASS_DIFFUSE_INDIRECT},
+    {TfToken("diffuse_color"), PASS_DIFFUSE_COLOR},
+    {TfToken("glossy_direct"), PASS_GLOSSY_DIRECT},
+    {TfToken("glossy_indirect"), PASS_GLOSSY_INDIRECT},
+    {TfToken("glossy_color"), PASS_GLOSSY_COLOR},
+    {TfToken("transmission_direct"), PASS_TRANSMISSION_DIRECT},
+    {TfToken("transmission_indirect"), PASS_TRANSMISSION_INDIRECT},
+    {TfToken("transmission_color"), PASS_TRANSMISSION_COLOR},
+    {TfToken("volume"), PASS_VOLUME},
+    {TfToken("volume_direct"), PASS_VOLUME_DIRECT},
+    {TfToken("volume_indirect"), PASS_VOLUME_INDIRECT},
+    {TfToken("sample_count"), PASS_SAMPLE_COUNT},
     {HdAovTokens->primId, PASS_OBJECT_ID},
+    // Written by the AOV output node of the default surface shader (see the constructor).
     {HdAovTokens->instanceId, PASS_AOV_VALUE},
 };
 
+TfToken GetSourceName(const HdRenderPassAovBinding &aovBinding)
+{
+  // husk names a binding after its output channel (for example "C") and passes the
+  // RenderVar's source name ("color") in the AOV settings. Hosts that bind a Hydra AOV
+  // directly, like the viewport, use the AOV name.
+  const auto setting = aovBinding.aovSettings.find(_tokens->sourceName);
+  if (setting != aovBinding.aovSettings.end()) {
+    const VtValue &value = setting->second;
+    if (value.IsHolding<std::string>()) {
+      return TfToken(value.UncheckedGet<std::string>());
+    }
+    if (value.IsHolding<TfToken>()) {
+      return value.UncheckedGet<TfToken>();
+    }
+  }
+  return aovBinding.aovName;
+}
+
 }  // namespace
+
+PassType HdCyclesPassTypeForAov(const TfToken &sourceName)
+{
+  const auto it = kAovToPass.find(sourceName);
+  return it == kAovToPass.end() ? PASS_NONE : it->second;
+}
 
 SceneLock::SceneLock(const HdRenderParam *renderParam)
     : scene(static_cast<const HdCyclesSession *>(renderParam)->session->scene.get()),
@@ -154,38 +210,37 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
   const vector<Pass *> &scene_passes = scene->passes;
   scene->delete_nodes(set<Pass *>(scene_passes.begin(), scene_passes.end()));
 
-  // Update passes with requested AOV bindings
+  // Update passes with requested AOV bindings. Cycles writes one pass per type, so bindings
+  // of the same type (aliases such as "C" and "color") share a pass, named after the type. A
+  // shader AOV pass is named after the AOV output node that writes it.
   _aovBindings = aovBindings;
-  for (const HdRenderPassAovBinding &aovBinding : aovBindings) {
-    // husk names a binding after its output channel (for example "C") and passes the
-    // RenderVar's source name ("color") in the AOV settings. The pass type comes from the
-    // source name; the pass keeps the binding's name, which is what the output driver reads.
-    TfToken sourceName = aovBinding.aovName;
-    const auto sourceNameSetting = aovBinding.aovSettings.find(_tokens->sourceName);
-    if (sourceNameSetting != aovBinding.aovSettings.end()) {
-      const VtValue &value = sourceNameSetting->second;
-      if (value.IsHolding<std::string>()) {
-        sourceName = TfToken(value.UncheckedGet<std::string>());
+  _aovPasses.assign(aovBindings.size(), HdCyclesAovPass());
+  std::unordered_set<std::string> createdPasses;
+  for (size_t i = 0; i < aovBindings.size(); ++i) {
+    const TfToken sourceName = GetSourceName(aovBindings[i]);
+    const PassType type = HdCyclesPassTypeForAov(sourceName);
+    if (type == PASS_NONE) {
+      // elementId is a standard Hydra AOV that Cycles has no pass for.
+      if (sourceName != HdAovTokens->elementId) {
+        TF_WARN("Unknown pass %s", sourceName.GetText());
       }
-      else if (value.IsHolding<TfToken>()) {
-        sourceName = value.UncheckedGet<TfToken>();
-      }
-    }
-
-    const auto cyclesAov = kAovToPass.find(sourceName);
-    if (cyclesAov == kAovToPass.end()) {
-      // TODO: Use PASS_AOV_COLOR and PASS_AOV_VALUE for these?
-      TF_WARN("Unknown pass %s", sourceName.GetText());
       continue;
     }
 
-    const PassType type = cyclesAov->second;
-    const PassMode mode = PassMode::DENOISED;
+    HdCyclesAovPass &aovPass = _aovPasses[i];
+    aovPass.isId = sourceName == HdAovTokens->primId || sourceName == HdAovTokens->instanceId;
+    aovPass.passName = type == PASS_AOV_VALUE ? sourceName.GetString() :
+                                                pass_type_as_string(type);
+    if (!createdPasses.insert(aovPass.passName).second) {
+      continue;
+    }
 
     Pass *pass = scene->create_node<Pass>();
     pass->set_type(type);
-    pass->set_mode(mode);
-    pass->set_name(ustring(aovBinding.aovName.GetString()));
+    // The film drops this to noisy for passes that cannot be denoised, or when denoising is
+    // off.
+    pass->set_mode(PassMode::DENOISED);
+    pass->set_name(ustring(aovPass.passName));
   }
 }
 

@@ -6,8 +6,12 @@
 #pragma once
 
 #include "hydra/config.h"
+#include "scene/pass.h"
 #include "scene/scene.h"
 #include "util/thread.h"
+
+#include <string>
+#include <vector>
 
 #include <pxr/imaging/hd/renderDelegate.h>
 
@@ -21,6 +25,18 @@ struct SceneLock {
 
  private:
   CCL_NS::thread_scoped_lock sceneLock;
+};
+
+// The Cycles pass type that renders a RenderVar source name, or a Hydra AOV name when the
+// binding has no source name. PASS_NONE when Cycles has no matching pass.
+CCL_NS::PassType HdCyclesPassTypeForAov(const PXR_NS::TfToken &sourceName);
+
+// How one AOV binding is read back from Cycles.
+struct HdCyclesAovPass {
+  // The Cycles pass the binding reads; empty when the binding has no pass.
+  std::string passName;
+  // Integer ID buffer: Cycles stores IDs offset by one (see 'HdCyclesMesh::Sync').
+  bool isId = false;
 };
 
 class HdCyclesSession final : public PXR_NS::HdRenderParam {
@@ -62,6 +78,12 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
     return _aovBindings;
   }
 
+  // Parallel to GetAovBindings().
+  const std::vector<HdCyclesAovPass> &GetAovPasses() const
+  {
+    return _aovPasses;
+  }
+
   void SyncAovBindings(const PXR_NS::HdRenderPassAovBindingVector &aovBindings);
 
   void RemoveAovBinding(PXR_NS::HdRenderBuffer *renderBuffer);
@@ -77,6 +99,7 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   const bool _ownCyclesSession;
   double _stageMetersPerUnit = 0.01;
   PXR_NS::HdRenderPassAovBindingVector _aovBindings;
+  std::vector<HdCyclesAovPass> _aovPasses;
   PXR_NS::HdRenderPassAovBinding _displayAovBinding;
 };
 

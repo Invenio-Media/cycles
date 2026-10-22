@@ -30,8 +30,15 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
 {
   std::vector<float> pixels;
 
-  for (const HdRenderPassAovBinding &aovBinding : _renderParam->GetAovBindings()) {
+  const HdRenderPassAovBindingVector &aovBindings = _renderParam->GetAovBindings();
+  const std::vector<HdCyclesAovPass> &aovPasses = _renderParam->GetAovPasses();
+  for (size_t i = 0; i < std::min(aovBindings.size(), aovPasses.size()); ++i) {
+    const HdRenderPassAovBinding &aovBinding = aovBindings[i];
+    const HdCyclesAovPass &aovPass = aovPasses[i];
     if (auto *const renderBuffer = static_cast<HdCyclesRenderBuffer *>(aovBinding.renderBuffer)) {
+      if (aovPass.passName.empty()) {
+        continue;  // No Cycles pass for this binding; SyncAovBindings already warned
+      }
       if (aovBinding == _renderParam->GetDisplayAovBinding() && renderBuffer->IsResourceUsed()) {
         continue;  // Display AOV binding is already updated by Cycles display driver
       }
@@ -48,28 +55,22 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
           (format >= HdFormatFloat32 && format <= HdFormatFloat32Vec4))
       {
         float *const data = static_cast<float *>(renderBuffer->Map());
-        TF_VERIFY(tile.get_pass_pixels(aovBinding.aovName.GetString(), channels, data));
+        TF_VERIFY(tile.get_pass_pixels(aovPass.passName, channels, data));
         renderBuffer->Unmap();
       }
       else {
         pixels.resize(channels * tile.size.x * tile.size.y);
-        if (tile.get_pass_pixels(aovBinding.aovName.GetString(), channels, pixels.data())) {
-          const bool isId = aovBinding.aovName == HdAovTokens->primId ||
-                            aovBinding.aovName == HdAovTokens->elementId ||
-                            aovBinding.aovName == HdAovTokens->instanceId;
+        if (tile.get_pass_pixels(aovPass.passName, channels, pixels.data())) {
           renderBuffer->Map();
           renderBuffer->WritePixels(pixels.data(),
                                     GfVec2i(tile.offset.x, tile.offset.y),
                                     GfVec2i(tile.size.x, tile.size.y),
                                     channels,
-                                    isId);
+                                    aovPass.isId);
           renderBuffer->Unmap();
         }
         else {
-          // Do not warn on missing elementId, which is a standard AOV but is not implememted
-          if (aovBinding.aovName != HdAovTokens->elementId) {
-            TF_RUNTIME_ERROR("Could not find pass for AOV '%s'", aovBinding.aovName.GetText());
-          }
+          TF_RUNTIME_ERROR("Could not find pass for AOV '%s'", aovBinding.aovName.GetText());
         }
       }
     }
