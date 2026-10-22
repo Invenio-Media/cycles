@@ -30,6 +30,11 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
                   const CCL_NS::SceneParams &sceneParams = CCL_NS::SceneParams());
   ~HdCyclesSession() override;
 
+  bool OwnsSession() const
+  {
+    return _ownCyclesSession;
+  }
+
   void UpdateScene();
 
   double GetStageMetersPerUnit() const

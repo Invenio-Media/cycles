@@ -315,6 +315,11 @@ SceneParams HdCyclesDelegate::BuildSceneParams() const
   return params;
 }
 
+bool HdCyclesDelegate::CanRebuildSession() const
+{
+  return _renderParam->OwnsSession() && _realPrimCount == 0 && _renderPassCount == 0;
+}
+
 static bool IsRestartOnlyKey(const TfToken &key)
 {
   return key == HdCyclesRenderSettingsTokens->device ||
@@ -351,19 +356,20 @@ HdCyclesDelegate::HdCyclesDelegate(const HdRenderSettingsMap &settingsMap,
                                GetColorSpaceName(colorSpaceSetting->second) :
                                std::string());
 
-  // Collect restart-only settings before building the session so BuildSessionParams can use them.
-  for (const auto &setting : settingsMap) {
-    if (IsRestartOnlyKey(setting.first)) {
-      _restartSettings[setting.first] = setting.second;
-    }
-  }
-
   if (session_) {
+    // Wrapping an external session: the caller owns it and controls its params.
+    // Never collect restart settings or trigger a rebuild.
     _renderParam = std::make_unique<HdCyclesSession>(session_, keep_nodes);
-    // When wrapping an external session, infer the device type from it.
     _effectiveDeviceType = Device::string_from_type(session_->params.device.type);
   }
   else {
+    // Collect restart-only settings before building the session so BuildSessionParams/
+    // BuildSceneParams can use them.
+    for (const auto &setting : settingsMap) {
+      if (IsRestartOnlyKey(setting.first)) {
+        _restartSettings[setting.first] = setting.second;
+      }
+    }
     const auto br = BuildSessionParams();
     _effectiveDeviceType = br.second;
     _renderParam = std::make_unique<HdCyclesSession>(br.first, BuildSceneParams());

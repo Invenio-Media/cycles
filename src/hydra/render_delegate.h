@@ -171,11 +171,8 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
   CCL_NS::SceneParams BuildSceneParams() const;
 
   // Returns true when a restart-only setting change should trigger a rebuild.
-  // False means the setting should be ignored with a TF_WARN.
-  bool CanRebuildSession() const
-  {
-    return _realPrimCount == 0 && _renderPassCount == 0;
-  }
+  // Defined in render_delegate.cpp where HdCyclesSession is fully defined.
+  bool CanRebuildSession() const;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE
