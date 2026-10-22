@@ -362,6 +362,11 @@ void HdCyclesLight::Finalize(HdRenderParam *renderParam)
   const SceneLock lock(renderParam);
   const bool keep_nodes = static_cast<const HdCyclesSession *>(renderParam)->keep_nodes;
 
+  /* The background outlives the dome that set its light group. */
+  if (_lightType == HdPrimTypeTokens->domeLight) {
+    lock.scene->background->set_lightgroup(ustring());
+  }
+
   if (!keep_nodes) {
     /* Delete the object before the light, since the object references the light. */
     lock.scene->delete_node(_object);
