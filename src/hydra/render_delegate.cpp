@@ -762,13 +762,9 @@ HdRenderSettingDescriptorList HdCyclesDelegate::GetRenderSettingDescriptors() co
       {"Sample Offset", HdCyclesRenderSettingsTokens->sampleOffset, VtValue(0)});
   descriptors.push_back({"Threads", HdCyclesRenderSettingsTokens->threads, VtValue(0)});
 
-  // Device token
-  {
-    static const VtStringArray kDeviceTokens = {
-        "AUTO", "CPU", "METAL", "CUDA", "OPTIX", "HIP", "ONEAPI"};
-    descriptors.push_back(
-        {"Device", HdCyclesRenderSettingsTokens->device, VtValue(TfToken("AUTO"))});
-  }
+  // Device token — defaults and tokens are in the manifest; descriptor needs only the default.
+  descriptors.push_back(
+      {"Device", HdCyclesRenderSettingsTokens->device, VtValue(TfToken("AUTO"))});
 
   // Integrator sockets
   for (const SocketType &socket : scene->integrator->type->inputs) {
