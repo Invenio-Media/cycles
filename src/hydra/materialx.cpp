@@ -1082,6 +1082,9 @@ bool MaterialXTranslator::TranslateNode(const std::string &family)
       Set(node,
           "detail",
           Math("subtract", AsFloat(In("octaves")), Operand::Constant(VtValue(1.0f)), false));
+      /* Cycles bounds roughness only below, at 0: a negative diminish, which would alternate
+       * the octaves' signs, is the one value that renders otherwise, and look-dev doesn't
+       * use it. */
       Set(node, "roughness", In("diminish"));
       Set(node, "lacunarity", In("lacunarity"));
     }
