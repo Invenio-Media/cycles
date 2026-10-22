@@ -426,6 +426,14 @@ static bool ReadVec3fParam(HdMaterialNodeParameterContainerSchema params,
   return false;
 }
 
+/* UsdPreviewSurface's useSpecularWorkflow: 1 selects the specular workflow. */
+static bool SpecularWorkflow(HdMaterialNodeParameterContainerSchema params)
+{
+  int workflow = 0;
+  return ReadIntParam(params, CyclesMaterialTokens->useSpecularWorkflow, &workflow) &&
+         workflow == 1;
+}
+
 }  // namespace
 
 HdCyclesMaterial::HdCyclesMaterial(const SdfPath &sprimId) : HdMaterial(sprimId) {}
@@ -681,9 +689,22 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
       continue;
     }
 
-    const std::string inputName = inputMapping ?
-                                      inputMapping->parameterName(dstSocketName, nullptr) :
-                                      dstSocketName.GetString();
+    std::string inputName = inputMapping ? inputMapping->parameterName(dstSocketName, nullptr) :
+                                           dstSocketName.GetString();
+
+    /* In the specular workflow a connected specularColor tints the specular layer and a
+     * connected metallic is ignored; in the metallic workflow specularColor is ignored. */
+    if (nodeDesc.mapping == sUsdToCyles->previewSurfaceMapping() &&
+        SpecularWorkflow(nodeSchema.GetParameters()))
+    {
+      static const TfToken metallic("metallic");
+      if (dstSocketName == CyclesMaterialTokens->specularColor) {
+        inputName = "specular_tint";
+      }
+      else if (dstSocketName == metallic) {
+        continue;
+      }
+    }
 
     /* Skip parameters that are handled elsewhere. */
     if (inputName == SKIP_PARAM) {
@@ -824,6 +845,14 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
         if (nodeDesc.mapping) {
           nodeDesc.mapping->initializeNode(nodeDesc.node);
         }
+        /* UsdPreviewSurface and UsdUVTexture parameters can add or remove helper nodes
+         * (scale/bias, normal map, cutout, specular workflow), which UpdateParameters cannot
+         * do, so a parameter edit on them rebuilds the graph. */
+        if (nodeDesc.mapping == sUsdToCyles->previewSurfaceMapping() ||
+            nodeDesc.mapping == sUsdToCyles->uvTextureMapping())
+        {
+          _rebuildOnDirtyParams = true;
+        }
         _nodes.emplace(nodePath, nodeDesc);
       }
       else {
@@ -910,7 +939,6 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
 
     nodeIt->second.scaleBiasRgb = rgbNode;
     nodeIt->second.scaleBiasAlpha = alphaNode;
-    _rebuildOnDirtyParams = true;
   }
 
   /* === Pass 3: Normal-map chain and specular workflow for UsdPreviewSurface === */
@@ -930,15 +958,19 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
     ShaderNode *principled = nodeIt->second.node;
     HdMaterialNodeParameterContainerSchema params = nodeSchema.GetParameters();
 
-    /* -- Normal-map chain --
+    /* -- Normal-map chain, only when the material authors or connects a normal --
      * Build: [upstream] → vector_math(multiply_add) ×0.5+0.5 → normal_map → principled.normal
      *
      * The UsdPreviewSurface normal input expects tangent-space vectors in [-1, 1].
      * Cycles' normal_map node expects a colour in [0, 1], so we remap with ×0.5 + 0.5.
-     * The chain is always inserted so that both connected and constant normals work.
      * Connected case: upstream → remap.Vector1; connection is handled in UpdateConnections.
-     * Constant case: the authored normal value (in [-1,1]) is set on remap.Vector1 below. */
-    {
+     * Constant case: the authored normal value (in [-1,1]) is set on remap.Vector1 below.
+     * Without either, Principled keeps the shading normal and no tangents are needed. */
+    GfVec3f constNormal(0.0f, 0.0f, 1.0f);
+    const bool authoredNormal = ReadVec3fParam(params, CyclesMaterialTokens->normal, &constNormal);
+    const bool connectedNormal =
+        nodeSchema.GetInputConnections().Get(CyclesMaterialTokens->normal).GetNumElements() > 0;
+    if (authoredNormal || connectedNormal) {
       const NodeType *vmType = NodeType::find(ustring("vector_math"));
       const NodeType *nmType = NodeType::find(ustring("normal_map"));
       if (vmType && nmType) {
@@ -955,6 +987,11 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
           if (const SocketType *v3 = _normalRemapNode->type->find_input(ustring("vector3"))) {
             _normalRemapNode->set(*v3, make_float3(0.5f, 0.5f, 0.5f));
           }
+          /* The authored constant, or flat (0, 0, 1) until a connection replaces it. */
+          if (const SocketType *v1 = _normalRemapNode->type->find_input(ustring("vector1"))) {
+            _normalRemapNode->set(*v1,
+                                  make_float3(constNormal[0], constNormal[1], constNormal[2]));
+          }
         }
 
         _normalMapNode = graph->create_node(nmType);
@@ -963,21 +1000,6 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
 
         graph->connect(_normalRemapNode->output("Vector"), _normalMapNode->input("Color"));
         graph->connect(_normalMapNode->output("Normal"), principled->input("Normal"));
-
-        /* If the normal is authored as a constant (not connected), set the remap node's
-         * Vector1 input to the authored value so the chain produces the correct colour.
-         * Constant normals connected to UsdPreviewSurface are unusual in practice and the
-         * USD spec does not require them, but we support them as an approximation. */
-        /* Always set Vector1 to the tangent-space "flat" direction (0, 0, 1) so an
-         * unconnected normal gives no perturbation.  vector_math(multiply_add) default is
-         * zero_float3, which remaps to (0.5,0.5,0.5) = zero-length normal; wrong. */
-        GfVec3f constNormal(0.0f, 0.0f, 1.0f);
-        ReadVec3fParam(params, CyclesMaterialTokens->normal, &constNormal);
-        if (const SocketType *v1 = _normalRemapNode->type->find_input(ustring("vector1"))) {
-          _normalRemapNode->set(*v1,
-                                make_float3(constNormal[0], constNormal[1], constNormal[2]));
-        }
-        _rebuildOnDirtyParams = true;
       }
     }
 
@@ -985,25 +1007,23 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
      * Principled BSDF v4 has no native specular-workflow mode.
      * Approximation:
      *   workflow=0 (metallic, default): leave specular_tint = white (no tint).
-     *   workflow=1: map specularColor → specular_tint; the tint modulates the specular
-     *               highlight but is not an exact match because Principled uses a
-     *               metallic-workflow energy model. In particular, the F0 is not set
-     *               from specularColor, only the tint colour. At roughness=0 the result
-     *               is close; at high roughness and non-grey specularColor it diverges.
-     * Note: specularColor is only applied here, not in UpdateParameters, so that the
-     * workflow flag is always read first regardless of parameter order in the network. */
-    {
-      int workflow = 0;
-      ReadIntParam(params, CyclesMaterialTokens->useSpecularWorkflow, &workflow);
-      if (workflow == 1) {
-        GfVec3f specColor(1.0f, 1.0f, 1.0f);
-        if (ReadVec3fParam(params, CyclesMaterialTokens->specularColor, &specColor)) {
-          if (const SocketType *sock = principled->type->find_input(ustring("specular_tint"))) {
-            principled->set(*sock, make_float3(specColor[0], specColor[1], specColor[2]));
-          }
+     *   workflow=1: map specularColor → specular_tint, and ignore metallic as the spec says;
+     *               the tint modulates the specular highlight but is not an exact match
+     *               because Principled uses a metallic-workflow energy model. In particular,
+     *               the F0 is not set from specularColor, only the tint colour. At roughness=0
+     *               the result is close; at high roughness and non-grey specularColor it
+     *               diverges. Connections to specularColor and metallic follow the same rule
+     *               in UpdateConnections. */
+    if (SpecularWorkflow(params)) {
+      GfVec3f specColor(1.0f, 1.0f, 1.0f);
+      if (ReadVec3fParam(params, CyclesMaterialTokens->specularColor, &specColor)) {
+        if (const SocketType *sock = principled->type->find_input(ustring("specular_tint"))) {
+          principled->set(*sock, make_float3(specColor[0], specColor[1], specColor[2]));
         }
       }
-      /* workflow=0: specular_tint stays white (set in initializeNode's Principled defaults). */
+      if (const SocketType *sock = principled->type->find_input(ustring("metallic"))) {
+        principled->set(*sock, 0.0f);
+      }
     }
 
     /* -- displacement constant --
@@ -1146,12 +1166,8 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
   }
 
   /* === Pass 6: opacityThreshold post-processing ===
-   * Insert a math(greater_than) node when opacityThreshold > 0.  This runs after
-   * connections are wired so we can disconnect principled_bsdf.Alpha and re-route it.
-   *
-   * Spec: alpha = (opacity >= threshold) ? 1.0 : 0.0.
-   * Cycles' greater_than returns a > b (strictly), which is functionally equivalent
-   * for sampled opacity values where the exact threshold boundary is not observable. */
+   * When opacityThreshold > 0, cut out: alpha = (opacity >= threshold) ? 1 : 0. This runs
+   * after connections are wired so we can disconnect principled_bsdf.Alpha and re-route it. */
   for (const TfToken &nodeName : nodes.GetNames()) {
     HdMaterialNodeSchema nodeSchema = nodes.Get(nodeName);
     const TfToken nodeTypeIdToken = nodeSchema.GetNodeIdentifier() ?
@@ -1185,45 +1201,43 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
       continue;
     }
 
-    ShaderNode *threshNode = graph->create_node(mType);
-    const SocketType *typeSocket = threshNode->type->find_input(ustring("math_type"));
-    if (typeSocket) {
-      SetNodeValue(threshNode, *typeSocket, VtValue(TfToken("greater_than")));
+    /* The spec cuts out where opacity < threshold, so opacity equal to the threshold stays
+     * opaque: alpha = 1 - (opacity < threshold). */
+    ShaderNode *lessNode = graph->create_node(mType);
+    ShaderNode *cutNode = graph->create_node(mType);
+    if (const SocketType *typeSocket = lessNode->type->find_input(ustring("math_type"))) {
+      SetNodeValue(lessNode, *typeSocket, VtValue(TfToken("less_than")));
     }
-    /* Value2 = threshold */
-    if (const SocketType *v2 = threshNode->type->find_input(ustring("value2"))) {
-      threshNode->set(*v2, threshold);
+    if (const SocketType *typeSocket = cutNode->type->find_input(ustring("math_type"))) {
+      SetNodeValue(cutNode, *typeSocket, VtValue(TfToken("subtract")));
+    }
+    if (const SocketType *v2 = lessNode->type->find_input(ustring("value2"))) {
+      lessNode->set(*v2, threshold);
+    }
+    if (const SocketType *v1 = cutNode->type->find_input(ustring("value1"))) {
+      cutNode->set(*v1, 1.0f);
     }
 
-    /* Wire: existing alpha source → threshNode.Value1 → principled.Alpha */
-    ShaderInput *threshValue1 = threshNode->input("Value1");
-    if (!threshValue1) {
-      continue;
-    }
-
+    /* Wire: existing alpha source → lessNode.Value1 → cutNode.Value2 → principled.Alpha */
+    ShaderInput *lessValue1 = lessNode->input("Value1");
     if (alphaIn->link) {
-      /* Disconnect current alpha connection and reroute through greater_than. */
       ShaderOutput *existingAlphaOut = alphaIn->link;
       graph->disconnect(alphaIn);
-      graph->connect(existingAlphaOut, threshValue1);
+      graph->connect(existingAlphaOut, lessValue1);
     }
-    else {
-      /* Constant alpha: read the current value and set it on threshNode. */
-      const SocketType *v1 = threshNode->type->find_input(ustring("value1"));
-      if (v1) {
-        float currentAlpha = 1.0f;
-        /* principled.Alpha default or authored value */
-        if (const SocketType *alphaSock = principled->type->find_input(ustring("alpha"))) {
-          VtValue currentVal = GetNodeValue(principled, *alphaSock);
-          if (currentVal.IsHolding<float>()) {
-            currentAlpha = currentVal.UncheckedGet<float>();
-          }
+    else if (const SocketType *v1 = lessNode->type->find_input(ustring("value1"))) {
+      /* Constant alpha: the authored opacity, or the default. */
+      float currentAlpha = 1.0f;
+      if (const SocketType *alphaSock = principled->type->find_input(ustring("alpha"))) {
+        VtValue currentVal = GetNodeValue(principled, *alphaSock);
+        if (currentVal.IsHolding<float>()) {
+          currentAlpha = currentVal.UncheckedGet<float>();
         }
-        threshNode->set(*v1, currentAlpha);
       }
+      lessNode->set(*v1, currentAlpha);
     }
-    graph->connect(threshNode->output("Value"), alphaIn);
-    _rebuildOnDirtyParams = true;
+    graph->connect(lessNode->output("Value"), cutNode->input("Value2"));
+    graph->connect(cutNode->output("Value"), alphaIn);
   }
 
   /* === Create the instanceId AOV output === */
