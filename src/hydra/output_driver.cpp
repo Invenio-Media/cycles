@@ -7,6 +7,8 @@
 #include "hydra/render_buffer.h"
 #include "hydra/session.h"
 
+#include <algorithm>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 HdCyclesOutputDriver::HdCyclesOutputDriver(HdCyclesSession *renderParam)
@@ -52,6 +54,12 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
       }
 
       const size_t channels = HdGetComponentCount(format);
+      const size_t numValues = channels * tile.size.x * tile.size.y;
+      const auto applyScale = [&aovPass, numValues](float *values) {
+        if (aovPass.scale != 1.0f) {
+          std::for_each_n(values, numValues, [&aovPass](float &v) { v *= aovPass.scale; });
+        }
+      };
       // Avoid extra copy by mapping render buffer directly when dimensions/format match the tile
       if (tile.offset.x == 0 && tile.offset.y == 0 && tile.size.x == renderBuffer->GetWidth() &&
           tile.size.y == renderBuffer->GetHeight() &&
@@ -59,11 +67,13 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
       {
         float *const data = static_cast<float *>(renderBuffer->Map());
         TF_VERIFY(tile.get_pass_pixels(aovPass.passName, channels, data));
+        applyScale(data);
         renderBuffer->Unmap();
       }
       else {
-        pixels.resize(channels * tile.size.x * tile.size.y);
+        pixels.resize(numValues);
         if (tile.get_pass_pixels(aovPass.passName, channels, pixels.data())) {
+          applyScale(pixels.data());
           renderBuffer->Map();
           renderBuffer->WritePixels(pixels.data(),
                                     GfVec2i(tile.offset.x, tile.offset.y),

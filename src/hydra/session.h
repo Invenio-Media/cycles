@@ -37,6 +37,9 @@ struct HdCyclesAovPass {
   std::string passName;
   // Integer ID buffer: Cycles stores IDs offset by one (see 'HdCyclesMesh::Sync').
   bool isId = false;
+  // Multiplies the pass values. The scene is in metres inside Cycles; positions and depths
+  // go back to stage units.
+  float scale = 1.0f;
 };
 
 class HdCyclesSession final : public PXR_NS::HdRenderParam {

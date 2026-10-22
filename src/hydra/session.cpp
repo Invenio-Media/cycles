@@ -230,6 +230,9 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
 
     HdCyclesAovPass &aovPass = _aovPasses[i];
     aovPass.isId = sourceName == HdAovTokens->primId || sourceName == HdAovTokens->instanceId;
+    if (type == PASS_POSITION || type == PASS_DEPTH) {
+      aovPass.scale = float(1.0 / _stageMetersPerUnit);
+    }
     aovPass.passName = type == PASS_AOV_VALUE ? sourceName.GetString() :
                                                 pass_type_as_string(type);
     if (!createdPasses.insert(aovPass.passName).second) {
