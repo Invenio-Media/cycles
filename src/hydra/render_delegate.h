@@ -10,7 +10,9 @@
 #include <pxr/imaging/hd/renderDelegate.h>
 #include <pxr/imaging/hgi/hgi.h>
 
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -150,9 +152,22 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
   // destructor can decrement it without a backpointer to the delegate.
   std::shared_ptr<int> _renderPassCount;
 
+  // Hydra's scene state version at the last CommitResources.
+  std::atomic<unsigned> _sceneStateVersion = 0;
+  // Cryptomatte render stats, rebuilt only when the scene state version or the film's
+  // cryptomatte types change, not on every GetRenderStats() poll.
+  mutable std::mutex _cryptomatteStatsMutex;
+  mutable PXR_NS::VtDictionary _cryptomatteStats;
+  mutable unsigned _cryptomatteStatsVersion = 0;
+  mutable int _cryptomatteStatsTypes = 0;
+
   // Makes Cycles render in this colorspace of the OCIO config; empty, or a name the config
   // does not have, means the config's scene_linear role.
   void ApplyRenderingColorSpace(std::string colorSpace);
+
+  // The cryptomatte render stats, from the cache unless the scene changed. Never waits for
+  // the scene: while it is being updated, the cache is returned.
+  PXR_NS::VtDictionary GetCryptomatteStats() const;
 
   // Rebuild the Cycles Session from _restartSettings, then replay _appliedSettings.
   void RebuildSession();

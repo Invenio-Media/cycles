@@ -731,7 +731,7 @@ void HdCyclesDelegate::DestroyBprim(HdBprim *bPrim)
 
 void HdCyclesDelegate::CommitResources(HdChangeTracker *tracker)
 {
-  TF_UNUSED(tracker);
+  _sceneStateVersion = tracker->GetSceneStateVersion();
 
   const SceneLock lock(_renderParam.get());
 
@@ -781,29 +781,51 @@ VtDictionary HdCyclesDelegate::GetRenderStats() const
                               {"renderProgressAnnotation", VtValue(status)},
                               {"huskErrorStatus", VtValue(progress.get_error() ? 1 : 0)}};
 
+  for (const auto &[key, value] : GetCryptomatteStats()) {
+    renderStats[key] = value;
+  }
+  return renderStats;
+}
+
+VtDictionary HdCyclesDelegate::GetCryptomatteStats() const
+{
   // Cryptomatte metadata for each type being rendered, which UsdRenderers.json's
   // husk.metadata writes into the image as the cryptomatte specification names it. Types not
   // rendered publish nothing, so husk leaves their metadata out.
+  const std::lock_guard cacheLock(_cryptomatteStatsMutex);
   Scene *const scene = _renderParam->session->scene.get();
-  const thread_scoped_lock lock(scene->mutex);
-  const CryptomatteType cryptomatte = scene->film->get_cryptomatte_passes();
-  const auto publish = [&renderStats](const char *type, const char *layer, string manifest) {
+  // The session holds the scene through whole updates, BVH builds among them, while hosts
+  // poll the stats for progress.
+  const thread_scoped_lock sceneLock(scene->mutex, std::try_to_lock);
+  if (!sceneLock.owns_lock()) {
+    return _cryptomatteStats;
+  }
+  const int types = scene->film->get_cryptomatte_passes();
+  const unsigned version = _sceneStateVersion;
+  if (types == _cryptomatteStatsTypes && version == _cryptomatteStatsVersion) {
+    return _cryptomatteStats;
+  }
+
+  _cryptomatteStats.clear();
+  const auto publish = [this](const char *type, const char *layer, string manifest) {
     const std::string prefix = std::string("cryptomatte_") + type + "_";
-    renderStats[prefix + "name"] = VtValue(std::string(layer));
-    renderStats[prefix + "hash"] = VtValue(std::string("MurmurHash3_32"));
-    renderStats[prefix + "conversion"] = VtValue(std::string("uint32_to_float32"));
-    renderStats[prefix + "manifest"] = VtValue(std::move(manifest));
+    _cryptomatteStats[prefix + "name"] = VtValue(std::string(layer));
+    _cryptomatteStats[prefix + "hash"] = VtValue(std::string("MurmurHash3_32"));
+    _cryptomatteStats[prefix + "conversion"] = VtValue(std::string("uint32_to_float32"));
+    _cryptomatteStats[prefix + "manifest"] = VtValue(std::move(manifest));
   };
-  if (cryptomatte & CRYPT_OBJECT) {
+  if (types & CRYPT_OBJECT) {
     publish("object", "CryptoObject", scene->object_manager->get_cryptomatte_objects(scene));
   }
-  if (cryptomatte & CRYPT_MATERIAL) {
+  if (types & CRYPT_MATERIAL) {
     publish("material", "CryptoMaterial", scene->shader_manager->get_cryptomatte_materials(scene));
   }
-  if (cryptomatte & CRYPT_ASSET) {
+  if (types & CRYPT_ASSET) {
     publish("asset", "CryptoAsset", scene->object_manager->get_cryptomatte_assets(scene));
   }
-  return renderStats;
+  _cryptomatteStatsTypes = types;
+  _cryptomatteStatsVersion = version;
+  return _cryptomatteStats;
 }
 
 HdAovDescriptor HdCyclesDelegate::GetDefaultAovDescriptor(const TfToken &name) const

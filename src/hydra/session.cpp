@@ -79,6 +79,9 @@ constexpr std::pair<const char *, CryptomatteType> kCryptomatteTypes[] = {
     {"CryptoAsset", CRYPT_ASSET},
 };
 
+/* Blender's limit: 16 IDs per pixel. */
+constexpr int kMaxCryptomatteLayers = 8;
+
 bool ParseCryptomatteLayer(const TfToken &sourceName, CryptomatteLayer *layer)
 {
   const auto digit = [](const char c) { return c >= '0' && c <= '9'; };
@@ -251,15 +254,24 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
 
   // Cryptomatte: the film records the requested types to the deepest requested layer, in
   // passes the kernel expects in this order (object, material, asset) and with Blender's
-  // names, which the bindings read by name.
+  // names, which the bindings read by name. The film has one depth for all types, so every
+  // requested type gets every layer up to the deepest one requested of any type.
   int cryptomatteTypes = CRYPT_NONE;
   int cryptomatteDepth = 0;
   for (const HdRenderPassAovBinding &aovBinding : aovBindings) {
     CryptomatteLayer layer;
-    if (ParseCryptomatteLayer(GetSourceName(aovBinding), &layer)) {
-      cryptomatteTypes |= layer.type;
-      cryptomatteDepth = max(cryptomatteDepth, layer.index + 1);
+    const TfToken sourceName = GetSourceName(aovBinding);
+    if (!ParseCryptomatteLayer(sourceName, &layer)) {
+      continue;
     }
+    if (layer.index >= kMaxCryptomatteLayers) {
+      HDCYCLES_WARN("Cryptomatte has at most %d layers; %s is not rendered",
+                    kMaxCryptomatteLayers,
+                    sourceName.GetText());
+      continue;
+    }
+    cryptomatteTypes |= layer.type;
+    cryptomatteDepth = max(cryptomatteDepth, layer.index + 1);
   }
   scene->film->set_cryptomatte_passes(CryptomatteType(cryptomatteTypes));
   scene->film->set_cryptomatte_depth(cryptomatteDepth);
@@ -278,7 +290,9 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
     HdCyclesAovPass &aovPass = _aovPasses[i];
     CryptomatteLayer layer;
     if (ParseCryptomatteLayer(sourceName, &layer)) {
-      aovPass.passName = sourceName.GetString();
+      if (layer.index < kMaxCryptomatteLayers) {
+        aovPass.passName = sourceName.GetString();
+      }
       continue;
     }
 
