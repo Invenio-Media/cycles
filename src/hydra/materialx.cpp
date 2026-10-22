@@ -1059,6 +1059,16 @@ bool MaterialXTranslator::TranslateNode(const std::string &family)
      * channel differently from Cycles' Color output: the same noise, other values. */
     const bool is2d = family == "noise2d";
     const bool scalar = IsFloatType();
+    /* Cycles' detail is 0 to 15: fractal3d with no octaves is zero, and above 16 it stops. */
+    const float octaves = family == "fractal3d" ? ConstantFloat("octaves", 1.0f) : 1.0f;
+    if (octaves < 1.0f) {
+      Provide("out", Operand::Constant(scalar ? VtValue(0.0f) : VtValue(GfVec3f(0.0f))));
+      return true;
+    }
+    if (octaves > 16.0f) {
+      _notes.insert(_nodeDefinition.GetString() + " renders 16 of its " +
+                    std::to_string(int(octaves)) + " octaves");
+    }
     const TfToken node = _node;
     SetType(node, "noise_texture");
     SetValue(node, "dimensions", VtValue(TfToken(is2d ? "2D" : "3D")));
@@ -1117,6 +1127,9 @@ bool MaterialXTranslator::TranslateNode(const std::string &family)
     };
     if (IsFloatType()) {
       /* style 1 is the nearest cell's random value. */
+      if (In("style").connection) {
+        _notes.insert(_nodeDefinition.GetString() + " takes a connected style as 0, distance");
+      }
       const TfToken f1 = voronoi("f1");
       Provide("out",
               ConstantFloat("style", 0.0f) == 1.0f ?

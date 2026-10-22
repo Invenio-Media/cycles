@@ -45,6 +45,13 @@ static SdfPath MaterialNodeNameToSdfPath(const TfToken &nodeName)
   return SdfPath::AbsoluteRootPath().AppendChild(nodeName);
 }
 
+/* A node a network edit deleted, such as one the MaterialX translation replaced, stays
+ * listed without a type. Nothing connects to it. */
+static bool IsDeletedNode(HdMaterialNodeSchema node)
+{
+  return !node.GetNodeIdentifier();
+}
+
 // clang-format off
 TF_DEFINE_PRIVATE_TOKENS(CyclesMaterialTokens,
     (cycles)
@@ -662,7 +669,7 @@ void HdCyclesMaterial::UpdateParameters(HdMaterialNetworkSchema network)
 {
   HdMaterialNodeContainerSchema nodes = network.GetNodes();
   for (const TfToken &nodeName : nodes.GetNames()) {
-    if (!nodes.Get(nodeName).GetNodeIdentifier()) {
+    if (IsDeletedNode(nodes.Get(nodeName))) {
       continue;
     }
     const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
@@ -869,9 +876,7 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
   /* === Pass 1: Create all nodes and set their authored parameters === */
   for (const TfToken &nodeName : nodes.GetNames()) {
     HdMaterialNodeSchema nodeSchema = nodes.Get(nodeName);
-    /* A node a network edit deleted, such as one the MaterialX translation replaced, stays
-     * listed without a type. */
-    if (!nodeSchema.GetNodeIdentifier()) {
+    if (IsDeletedNode(nodeSchema)) {
       continue;
     }
     const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
@@ -1097,7 +1102,7 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
 
   /* === Pass 4: Wire all connections === */
   for (const TfToken &nodeName : nodes.GetNames()) {
-    if (!nodes.Get(nodeName).GetNodeIdentifier()) {
+    if (IsDeletedNode(nodes.Get(nodeName))) {
       continue;
     }
     const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
