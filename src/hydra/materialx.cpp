@@ -387,6 +387,14 @@ class MaterialXTranslator {
     return texcoord.connection ? texcoord : DefaultUV();
   }
 
+  /* An input bound to the object-space position unless connected. */
+  Operand ObjectPosition(const char *name)
+  {
+    const Operand &position = In(name);
+    return position.connection ? position :
+                                 Operand::Output(AddNode("texture_coordinate"), "object");
+  }
+
   Operand Math(const char *op, const Operand &a, const Operand &b, bool vector);
   Operand Unary(const char *op, const Operand &a, bool vector);
   Operand Mix(const Operand &a, const Operand &b, const Operand &factor, bool vector);
@@ -1042,6 +1050,85 @@ bool MaterialXTranslator::TranslateNode(const std::string &family)
       condition = Operand::Output(node, "value");
     }
     Provide("out", Mix(In("in2"), In("in1"), condition, vector));
+    return true;
+  }
+  if (family == "noise2d" || family == "noise3d" || family == "fractal3d") {
+    /* MaterialX's noise library and Cycles' come from OSL's: the same hash, gradients, fade
+     * and scale, and the same fractal sum. A float noise is Cycles' unnormalised Fac with
+     * one octave, or octaves - 1 more for fractal3d. Colour and vector noises hash each
+     * channel differently from Cycles' Color output: the same noise, other values. */
+    const bool is2d = family == "noise2d";
+    const bool scalar = IsFloatType();
+    const TfToken node = _node;
+    SetType(node, "noise_texture");
+    SetValue(node, "dimensions", VtValue(TfToken(is2d ? "2D" : "3D")));
+    SetValue(node, "type", VtValue(TfToken("fBM")));
+    SetValue(node, "use_normalize", VtValue(false));
+    SetValue(node, "scale", VtValue(1.0f));
+    SetValue(node, "distortion", VtValue(0.0f));
+    Set(node, "vector", is2d ? Texcoord("texcoord") : ObjectPosition("position"));
+    if (family == "fractal3d") {
+      Set(node,
+          "detail",
+          Math("subtract", AsFloat(In("octaves")), Operand::Constant(VtValue(1.0f)), false));
+      Set(node, "roughness", In("diminish"));
+      Set(node, "lacunarity", In("lacunarity"));
+    }
+    else {
+      SetValue(node, "detail", VtValue(0.0f));
+    }
+    Operand value = Operand::Output(node, scalar ? "fac" : "color");
+    value = Math("multiply", value, In("amplitude"), !scalar);
+    if (family != "fractal3d") {
+      value = Math("add", value, In("pivot"), !scalar);
+    }
+    Provide("out", value);
+    return true;
+  }
+  if (family == "cellnoise2d" || family == "cellnoise3d") {
+    /* A random value per integer cell: Cycles' white noise of the cell's corner, which
+     * hashes the corner's float bits where MaterialX hashes its integers. */
+    const bool is2d = family == "cellnoise2d";
+    const TfToken node = _node;
+    SetType(node, "white_noise_texture");
+    SetValue(node, "dimensions", VtValue(TfToken(is2d ? "2D" : "3D")));
+    Set(node,
+        "vector",
+        Unary("floor", is2d ? Texcoord("texcoord") : ObjectPosition("position"), true));
+    Provide("out", Operand::Output(node, "value"));
+    return true;
+  }
+  if ((family == "worleynoise2d" || family == "worleynoise3d") &&
+      !_valueType.starts_with("vector3"))
+  {
+    /* The distance to the nearest of one jittered point per cell: Cycles' Voronoi F1, with
+     * other hashes. A vector2 is the nearest two distances. */
+    const bool is2d = family == "worleynoise2d";
+    const Operand position = is2d ? Texcoord("texcoord") : ObjectPosition("position");
+    const auto voronoi = [&](const char *feature) {
+      const TfToken node = AddNode("voronoi_texture");
+      SetValue(node, "dimensions", VtValue(TfToken(is2d ? "2D" : "3D")));
+      SetValue(node, "metric", VtValue(TfToken("euclidean")));
+      SetValue(node, "feature", VtValue(TfToken(feature)));
+      SetValue(node, "scale", VtValue(1.0f));
+      Set(node, "randomness", In("jitter"));
+      Set(node, "vector", position);
+      return node;
+    };
+    if (IsFloatType()) {
+      /* style 1 is the nearest cell's random value. */
+      const TfToken f1 = voronoi("f1");
+      Provide("out",
+              ConstantFloat("style", 0.0f) == 1.0f ?
+                  Component(Operand::Output(f1, "color"), 0, true) :
+                  Operand::Output(f1, "distance"));
+    }
+    else {
+      const TfToken combine = AddNode("combine_xyz");
+      Set(combine, "x", Operand::Output(voronoi("f1"), "distance"));
+      Set(combine, "y", Operand::Output(voronoi("f2"), "distance"));
+      Provide("out", Operand::Output(combine, "vector"));
+    }
     return true;
   }
   if (family == "ramplr" || family == "ramptb") {

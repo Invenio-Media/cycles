@@ -662,6 +662,9 @@ void HdCyclesMaterial::UpdateParameters(HdMaterialNetworkSchema network)
 {
   HdMaterialNodeContainerSchema nodes = network.GetNodes();
   for (const TfToken &nodeName : nodes.GetNames()) {
+    if (!nodes.Get(nodeName).GetNodeIdentifier()) {
+      continue;
+    }
     const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
 
     const auto nodeIt = _nodes.find(nodePath);
@@ -866,6 +869,11 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
   /* === Pass 1: Create all nodes and set their authored parameters === */
   for (const TfToken &nodeName : nodes.GetNames()) {
     HdMaterialNodeSchema nodeSchema = nodes.Get(nodeName);
+    /* A node a network edit deleted, such as one the MaterialX translation replaced, stays
+     * listed without a type. */
+    if (!nodeSchema.GetNodeIdentifier()) {
+      continue;
+    }
     const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
 
     NodeDesc nodeDesc = {};
@@ -1089,6 +1097,9 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
 
   /* === Pass 4: Wire all connections === */
   for (const TfToken &nodeName : nodes.GetNames()) {
+    if (!nodes.Get(nodeName).GetNodeIdentifier()) {
+      continue;
+    }
     const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
 
     const auto nodeIt = _nodes.find(nodePath);
