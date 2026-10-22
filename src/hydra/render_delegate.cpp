@@ -203,9 +203,7 @@ const std::vector<HdCyclesSettingDesc> &GetSettingsTable()
 }
 }  // namespace
 
-// ---------------------------------------------------------------------------
 // Construction helpers
-// ---------------------------------------------------------------------------
 
 std::pair<SessionParams, std::string> HdCyclesDelegate::BuildSessionParams() const
 {
@@ -358,9 +356,7 @@ static bool IsRestartOnlyKey(const TfToken &key)
   return false;
 }
 
-// ---------------------------------------------------------------------------
 // Constructor / destructor
-// ---------------------------------------------------------------------------
 
 HdCyclesDelegate::HdCyclesDelegate(const HdRenderSettingsMap &settingsMap,
                                    Session *session_,
@@ -468,9 +464,7 @@ HdCyclesDelegate::~HdCyclesDelegate()
   --g_liveDelegates;
 }
 
-// ---------------------------------------------------------------------------
 // Driver / display
-// ---------------------------------------------------------------------------
 
 void HdCyclesDelegate::SetDrivers(const HdDriverVector &drivers)
 {
@@ -491,9 +485,7 @@ bool HdCyclesDelegate::IsDisplaySupported() const
 #endif
 }
 
-// ---------------------------------------------------------------------------
 // Prim type lists
-// ---------------------------------------------------------------------------
 
 const TfTokenVector &HdCyclesDelegate::GetSupportedRprimTypes() const
 {
@@ -510,9 +502,7 @@ const TfTokenVector &HdCyclesDelegate::GetSupportedBprimTypes() const
   return kSupportedBPrimTypes;
 }
 
-// ---------------------------------------------------------------------------
 // Render param
-// ---------------------------------------------------------------------------
 
 HdRenderParam *HdCyclesDelegate::GetRenderParam() const
 {
@@ -524,9 +514,7 @@ HdResourceRegistrySharedPtr HdCyclesDelegate::GetResourceRegistry() const
   return HdResourceRegistrySharedPtr();
 }
 
-// ---------------------------------------------------------------------------
 // Pause / Resume
-// ---------------------------------------------------------------------------
 
 bool HdCyclesDelegate::IsPauseSupported() const
 {
@@ -545,9 +533,7 @@ bool HdCyclesDelegate::Resume()
   return true;
 }
 
-// ---------------------------------------------------------------------------
 // Prim creation / destruction  (tracking for rebuild window)
-// ---------------------------------------------------------------------------
 
 HdRenderPassSharedPtr HdCyclesDelegate::CreateRenderPass(HdRenderIndex *index,
                                                          const HdRprimCollection &collection)
@@ -682,9 +668,7 @@ void HdCyclesDelegate::DestroyBprim(HdBprim *bPrim)
   delete bPrim;
 }
 
-// ---------------------------------------------------------------------------
 // Scene commit
-// ---------------------------------------------------------------------------
 
 void HdCyclesDelegate::CommitResources(HdChangeTracker *tracker)
 {
@@ -695,9 +679,7 @@ void HdCyclesDelegate::CommitResources(HdChangeTracker *tracker)
   _renderParam->UpdateScene();
 }
 
-// ---------------------------------------------------------------------------
 // Material / context helpers
-// ---------------------------------------------------------------------------
 
 TfToken HdCyclesDelegate::GetMaterialBindingPurpose() const
 {
@@ -709,9 +691,7 @@ TfTokenVector HdCyclesDelegate::GetMaterialRenderContexts() const
   return {_tokens->cycles};
 }
 
-// ---------------------------------------------------------------------------
 // Render stats / AOV
-// ---------------------------------------------------------------------------
 
 VtDictionary HdCyclesDelegate::GetRenderStats() const
 {
@@ -769,9 +749,7 @@ HdAovDescriptor HdCyclesDelegate::GetDefaultAovDescriptor(const TfToken &name) c
   return HdAovDescriptor();
 }
 
-// ---------------------------------------------------------------------------
 // Render settings descriptors
-// ---------------------------------------------------------------------------
 
 HdRenderSettingDescriptorList HdCyclesDelegate::GetRenderSettingDescriptors() const
 {
@@ -799,13 +777,10 @@ HdRenderSettingDescriptorList HdCyclesDelegate::GetRenderSettingDescriptors() co
   return descriptors;
 }
 
-// ---------------------------------------------------------------------------
 // SetRenderSetting
-// ---------------------------------------------------------------------------
 
 void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS::VtValue &value)
 {
-  // Restart-only settings ---------------------------------------------------
   if (IsRestartOnlyKey(key)) {
     _restartSettings[key] = value;
     if (CanRebuildSession()) {
@@ -834,7 +809,6 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
   Scene *const scene = _renderParam->session->scene.get();
   Session *const session = _renderParam->session;
 
-  // stageMetersPerUnit ------------------------------------------------------
   if (key == HdCyclesRenderSettingsTokens->stageMetersPerUnit) {
     _renderParam->SetStageMetersPerUnit(
         VtValue::Cast<double>(value).GetWithDefault(_renderParam->GetStageMetersPerUnit()));
@@ -842,7 +816,6 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     return;
   }
 
-  // time_limit --------------------------------------------------------------
   if (key == HdCyclesRenderSettingsTokens->timeLimit) {
     session->set_time_limit(
         VtValue::Cast<double>(value).GetWithDefault(session->params.time_limit));
@@ -850,7 +823,6 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     return;
   }
 
-  // samples -----------------------------------------------------------------
   if (key == HdCyclesRenderSettingsTokens->samples) {
     static const int max_samples = Integrator::MAX_SAMPLES;
     int samples = VtValue::Cast<int>(value).GetWithDefault(session->params.samples);
@@ -860,7 +832,6 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     return;
   }
 
-  // sample_offset -----------------------------------------------------------
   if (key == HdCyclesRenderSettingsTokens->sampleOffset) {
     session->params.sample_subset_offset = VtValue::Cast<int>(value).GetWithDefault(
         session->params.sample_subset_offset);
@@ -871,7 +842,6 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     return;
   }
 
-  // renderingColorSpace -----------------------------------------------------
   if (key == HdCyclesRenderSettingsTokens->renderingColorSpace) {
     // Houdini's viewport creates the delegate without settings and sets them before the first
     // sync, and restarts the renderer when this one changes later (restartrendersettings).
@@ -890,7 +860,6 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     return;
   }
 
-  // cycles:film:transparent -------------------------------------------------
   if (key == HdCyclesRenderSettingsTokens->filmTransparent) {
     const bool newVal = VtValue::Cast<bool>(value).GetWithDefault(_filmTransparent);
     if (newVal != _filmTransparent) {
@@ -908,7 +877,6 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     return;
   }
 
-  // cycles:integrator:<socket> ----------------------------------------------
   {
     const std::string &keyString = key.GetString();
     if (keyString.rfind("cycles:integrator:", 0) == 0) {
@@ -924,7 +892,6 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     }
   }
 
-  // cycles:film:<socket> ----------------------------------------------------
   {
     const std::string &keyString = key.GetString();
     if (keyString.rfind("cycles:film:", 0) == 0) {
@@ -942,13 +909,10 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
   }
 }
 
-// ---------------------------------------------------------------------------
 // GetRenderSetting
-// ---------------------------------------------------------------------------
 
 VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
 {
-  // settings_manifest -------------------------------------------------------
   if (key == HdCyclesRenderSettingsTokens->settingsManifest) {
     Scene *const scene = _renderParam->session->scene.get();
     VtDictionary manifest;
@@ -989,7 +953,6 @@ VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
     return VtValue(manifest);
   }
 
-  // Standard settings -------------------------------------------------------
   Scene *const scene = _renderParam->session->scene.get();
   Session *const session = _renderParam->session;
 
@@ -1011,10 +974,8 @@ VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
   if (key == HdCyclesRenderSettingsTokens->samples) {
     return VtValue(session->params.samples);
   }
-  if (key == HdCyclesRenderSettingsTokens->sampleOffset) {
-    return VtValue(
-        (session->params.use_sample_subset) ? session->params.sample_subset_offset : 0);
-  }
+  if (key == HdCyclesRenderSettingsTokens->sampleOffset)
+    return VtValue((session->params.use_sample_subset) ? session->params.sample_subset_offset : 0);
   if (key == HdCyclesRenderSettingsTokens->renderingColorSpace) {
     return _renderingColorSpace.empty() ? VtValue() : VtValue(TfToken(_renderingColorSpace));
   }
