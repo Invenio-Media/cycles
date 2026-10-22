@@ -872,19 +872,21 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
     ShaderNode *principled = nodeIt->second.node;
     HdMaterialNodeParameterContainerSchema params = nodeSchema.GetParameters();
 
-    /* -- Normal-map chain, only when the material authors or connects a normal --
+    /* -- Normal-map chain, only when the material connects a normal or authors a tilted one --
      * Build: [upstream] → vector_math(multiply_add) ×0.5+0.5 → normal_map → principled.normal
      *
      * The UsdPreviewSurface normal input expects tangent-space vectors in [-1, 1].
      * Cycles' normal_map node expects a colour in [0, 1], so we remap with ×0.5 + 0.5.
      * Connected case: upstream → remap.Vector1; connection is handled in UpdateConnections.
      * Constant case: the authored normal value (in [-1,1]) is set on remap.Vector1 below.
-     * Without either, Principled keeps the shading normal and no tangents are needed. */
+     * Otherwise, including an authored default (0, 0, 1), Principled keeps the shading normal
+     * and no tangents are needed. */
     GfVec3f constNormal(0.0f, 0.0f, 1.0f);
-    const bool authoredNormal = ReadParam(params, CyclesMaterialTokens->normal, &constNormal);
+    const bool tiltedNormal = ReadParam(params, CyclesMaterialTokens->normal, &constNormal) &&
+                              constNormal != GfVec3f(0.0f, 0.0f, 1.0f);
     const bool connectedNormal =
         nodeSchema.GetInputConnections().Get(CyclesMaterialTokens->normal).GetNumElements() > 0;
-    if (authoredNormal || connectedNormal) {
+    if (tiltedNormal || connectedNormal) {
       ShaderNode *remap = graph->create_node<VectorMathNode>();
       if (const SocketType *typeSocket = remap->type->find_input(ustring("math_type"))) {
         SetNodeValue(remap, *typeSocket, VtValue(TfToken("multiply_add")));
@@ -913,7 +915,8 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
      * Principled BSDF v4 has no native specular-workflow mode.
      * Approximation:
      *   workflow=0 (metallic, default): leave specular_tint = white (no tint).
-     *   workflow=1: map specularColor → specular_tint, and ignore metallic as the spec says;
+     *   workflow=1: map specularColor → specular_tint, and force metallic to 0 (the spec
+     *               ignores it in this workflow);
      *               the tint modulates the specular highlight but is not an exact match
      *               because Principled uses a metallic-workflow energy model. In particular,
      *               the F0 is not set from specularColor, only the tint colour. At roughness=0
@@ -933,10 +936,10 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
     }
 
     /* -- displacement constant --
-     * The authored constant for the displacement node made at terminal time; a connection
-     * replaces it in UpdateConnections. */
+     * A non-zero authored constant for the displacement node made at terminal time; a
+     * connection replaces it in UpdateConnections. A zero displacement needs no node. */
     if (ReadParam(params, CyclesMaterialTokens->displacement, &nodeIt->second.displacementConstant)) {
-      nodeIt->second.hasDisplacement = true;
+      nodeIt->second.hasDisplacement = nodeIt->second.displacementConstant != 0.0f;
     }
   }
 
