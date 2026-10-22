@@ -140,7 +140,6 @@ VtStringArray GetSocketEnumTokens(const SocketType &socket)
   return tokens;
 }
 
-
 // Cycles' working colorspace is process-wide: every open delegate renders in the one set
 // last. Tracked so that a delegate switching to a different one can be reported.
 std::mutex g_colorSpaceMutex;
@@ -176,30 +175,88 @@ const std::vector<HdCyclesSettingDesc> &GetSettingsTable()
   // constants initialised before any delegate is created.
   static const std::vector<HdCyclesSettingDesc> kTable = {
       // Session scalars
-      {HdCyclesRenderSettingsTokens->samples,      "Sample Count",  "int",    VtValue(1024),                 {}, false},
-      {HdCyclesRenderSettingsTokens->timeLimit,    "Time Limit",    "double", VtValue(0.0),                  {}, false},
-      {HdCyclesRenderSettingsTokens->sampleOffset, "Sample Offset", "int",    VtValue(0),                    {}, false},
-      {HdCyclesRenderSettingsTokens->threads,      "Threads",       "int",    VtValue(0),                    {}, true},
-      {HdCyclesRenderSettingsTokens->device,       "Device",        "token",  VtValue(TfToken("AUTO")),
-          VtStringArray{"AUTO","CPU","METAL","CUDA","OPTIX","HIP","ONEAPI"}, true},
+      {HdCyclesRenderSettingsTokens->samples, "Sample Count", "int", VtValue(1024), {}, false},
+      {HdCyclesRenderSettingsTokens->timeLimit, "Time Limit", "double", VtValue(0.0), {}, false},
+      {HdCyclesRenderSettingsTokens->sampleOffset, "Sample Offset", "int", VtValue(0), {}, false},
+      {HdCyclesRenderSettingsTokens->threads, "Threads", "int", VtValue(0), {}, true},
+      {HdCyclesRenderSettingsTokens->device,
+       "Device",
+       "token",
+       VtValue(TfToken("AUTO")),
+       VtStringArray{"AUTO", "CPU", "METAL", "CUDA", "OPTIX", "HIP", "ONEAPI"},
+       true},
       // Film sockets (hardcoded defaults match Cycles Film node defaults)
-      {HdCyclesRenderSettingsTokens->filmExposure,                "Exposure",                       "float",  VtValue(1.0f),                 {}, false},
-      {HdCyclesRenderSettingsTokens->filmPassAlphaThreshold,      "Pass Alpha Threshold",           "float",  VtValue(0.5f),                 {}, false},
-      {HdCyclesRenderSettingsTokens->filmFilterType,              "Filter Type",                    "token",  VtValue(TfToken("box")),
-          VtStringArray{"blackman_harris","box","gaussian"}, false},
-      {HdCyclesRenderSettingsTokens->filmFilterWidth,             "Filter Width",                   "float",  VtValue(1.0f),                 {}, false},
-      {HdCyclesRenderSettingsTokens->filmUseApproxShadowCatcher, "Use Approximate Shadow Catcher",  "bool",   VtValue(false),                {}, false},
+      {HdCyclesRenderSettingsTokens->filmExposure, "Exposure", "float", VtValue(1.0f), {}, false},
+      {HdCyclesRenderSettingsTokens->filmPassAlphaThreshold,
+       "Pass Alpha Threshold",
+       "float",
+       VtValue(0.5f),
+       {},
+       false},
+      {HdCyclesRenderSettingsTokens->filmFilterType,
+       "Filter Type",
+       "token",
+       VtValue(TfToken("box")),
+       VtStringArray{"blackman_harris", "box", "gaussian"},
+       false},
+      {HdCyclesRenderSettingsTokens->filmFilterWidth,
+       "Filter Width",
+       "float",
+       VtValue(1.0f),
+       {},
+       false},
+      {HdCyclesRenderSettingsTokens->filmUseApproxShadowCatcher,
+       "Use Approximate Shadow Catcher",
+       "bool",
+       VtValue(false),
+       {},
+       false},
       // Film transparent (custom, not a Film node socket)
-      {HdCyclesRenderSettingsTokens->filmTransparent,            "Film Transparent",                "bool",   VtValue(false),                {}, false},
+      {HdCyclesRenderSettingsTokens->filmTransparent,
+       "Film Transparent",
+       "bool",
+       VtValue(false),
+       {},
+       false},
       // Session restart params
-      {HdCyclesRenderSettingsTokens->sessionUseAutoTile, "Use Auto Tile", "bool", VtValue(true),             {}, true},
-      {HdCyclesRenderSettingsTokens->sessionTileSize,    "Tile Size",     "int",  VtValue(2048),             {}, true},
+      {HdCyclesRenderSettingsTokens->sessionUseAutoTile,
+       "Use Auto Tile",
+       "bool",
+       VtValue(true),
+       {},
+       true},
+      {HdCyclesRenderSettingsTokens->sessionTileSize, "Tile Size", "int", VtValue(2048), {}, true},
       // Scene restart params
-      {HdCyclesRenderSettingsTokens->sceneUseBvhSpatialSplit, "Use BVH Spatial Split", "bool",   VtValue(false),           {}, true},
-      {HdCyclesRenderSettingsTokens->sceneUseTextureCache,    "Use Texture Cache",     "bool",   VtValue(true),            {}, true},
-      {HdCyclesRenderSettingsTokens->sceneAutoTextureCache,   "Auto Texture Cache",    "bool",   VtValue(false),           {}, true},
-      {HdCyclesRenderSettingsTokens->sceneTextureCachePath,   "Texture Cache Path",    "string", VtValue(std::string("")), {}, true},
-      {HdCyclesRenderSettingsTokens->sceneTextureLimit,       "Texture Limit",         "int",    VtValue(0),               {}, true},
+      {HdCyclesRenderSettingsTokens->sceneUseBvhSpatialSplit,
+       "Use BVH Spatial Split",
+       "bool",
+       VtValue(false),
+       {},
+       true},
+      {HdCyclesRenderSettingsTokens->sceneUseTextureCache,
+       "Use Texture Cache",
+       "bool",
+       VtValue(true),
+       {},
+       true},
+      {HdCyclesRenderSettingsTokens->sceneAutoTextureCache,
+       "Auto Texture Cache",
+       "bool",
+       VtValue(false),
+       {},
+       true},
+      {HdCyclesRenderSettingsTokens->sceneTextureCachePath,
+       "Texture Cache Path",
+       "string",
+       VtValue(std::string("")),
+       {},
+       true},
+      {HdCyclesRenderSettingsTokens->sceneTextureLimit,
+       "Texture Limit",
+       "int",
+       VtValue(0),
+       {},
+       true},
   };
   return kTable;
 }
@@ -307,29 +364,29 @@ SceneParams HdCyclesDelegate::BuildSceneParams() const
   {
     auto it = _restartSettings.find(HdCyclesRenderSettingsTokens->sceneUseBvhSpatialSplit);
     if (it != _restartSettings.end()) {
-      params.use_bvh_spatial_split = VtValue::Cast<bool>(it->second).GetWithDefault(
-          params.use_bvh_spatial_split);
+      params.use_bvh_spatial_split =
+          VtValue::Cast<bool>(it->second).GetWithDefault(params.use_bvh_spatial_split);
     }
   }
   {
     auto it = _restartSettings.find(HdCyclesRenderSettingsTokens->sceneUseTextureCache);
     if (it != _restartSettings.end()) {
-      params.use_texture_cache = VtValue::Cast<bool>(it->second).GetWithDefault(
-          params.use_texture_cache);
+      params.use_texture_cache =
+          VtValue::Cast<bool>(it->second).GetWithDefault(params.use_texture_cache);
     }
   }
   {
     auto it = _restartSettings.find(HdCyclesRenderSettingsTokens->sceneAutoTextureCache);
     if (it != _restartSettings.end()) {
-      params.auto_texture_cache = VtValue::Cast<bool>(it->second).GetWithDefault(
-          params.auto_texture_cache);
+      params.auto_texture_cache =
+          VtValue::Cast<bool>(it->second).GetWithDefault(params.auto_texture_cache);
     }
   }
   {
     auto it = _restartSettings.find(HdCyclesRenderSettingsTokens->sceneTextureCachePath);
     if (it != _restartSettings.end()) {
-      params.texture_cache_path = VtValue::Cast<std::string>(it->second).GetWithDefault(
-          params.texture_cache_path);
+      params.texture_cache_path =
+          VtValue::Cast<std::string>(it->second).GetWithDefault(params.texture_cache_path);
     }
   }
   {
@@ -741,8 +798,7 @@ VtDictionary HdCyclesDelegate::GetRenderStats() const
     publish("object", "CryptoObject", scene->object_manager->get_cryptomatte_objects(scene));
   }
   if (cryptomatte & CRYPT_MATERIAL) {
-    publish(
-        "material", "CryptoMaterial", scene->shader_manager->get_cryptomatte_materials(scene));
+    publish("material", "CryptoMaterial", scene->shader_manager->get_cryptomatte_materials(scene));
   }
   if (cryptomatte & CRYPT_ASSET) {
     publish("asset", "CryptoAsset", scene->object_manager->get_cryptomatte_assets(scene));
@@ -959,8 +1015,8 @@ VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
     // Non-integrator settings from the canonical table.
     for (const HdCyclesSettingDesc &desc : GetSettingsTable()) {
       VtDictionary entry;
-      entry["label"]   = VtValue(std::string(desc.label));
-      entry["type"]    = VtValue(std::string(desc.typeName));
+      entry["label"] = VtValue(std::string(desc.label));
+      entry["type"] = VtValue(std::string(desc.typeName));
       entry["default"] = desc.defaultVal;
       entry["restart"] = VtValue(desc.restart);
       if (!desc.tokens.empty()) {
@@ -979,8 +1035,8 @@ VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
         continue;
       }
       VtDictionary entry;
-      entry["label"]   = VtValue(socket.ui_name.string());
-      entry["type"]    = VtValue(std::string(typeStr));
+      entry["label"] = VtValue(socket.ui_name.string());
+      entry["type"] = VtValue(std::string(typeStr));
       entry["default"] = GetSocketDefaultForManifest(scene->integrator, socket);
       entry["restart"] = VtValue(false);
       if (socket.type == SocketType::ENUM) {

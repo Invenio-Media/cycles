@@ -283,8 +283,7 @@ class UsdToCyclesPreviewSurface : public UsdToCyclesMapping {
                             VtValue * /*value*/ = nullptr) const override
   {
     /* These are handled as auxiliary nodes or post-processing; suppress the normal warning. */
-    if (name == CyclesMaterialTokens->normal ||
-        name == CyclesMaterialTokens->displacement ||
+    if (name == CyclesMaterialTokens->normal || name == CyclesMaterialTokens->displacement ||
         name == CyclesMaterialTokens->opacityThreshold ||
         name == CyclesMaterialTokens->useSpecularWorkflow ||
         name == CyclesMaterialTokens->specularColor)
@@ -388,8 +387,7 @@ bool ReadParam(HdMaterialNodeParameterContainerSchema params, const TfToken &nam
 bool SpecularWorkflow(HdMaterialNodeParameterContainerSchema params)
 {
   int workflow = 0;
-  return ReadParam(params, CyclesMaterialTokens->useSpecularWorkflow, &workflow) &&
-         workflow == 1;
+  return ReadParam(params, CyclesMaterialTokens->useSpecularWorkflow, &workflow) && workflow == 1;
 }
 
 /* The parameters that add or remove helper nodes in PopulateShaderGraph, or that are folded
@@ -401,9 +399,8 @@ std::string StructuralKey(HdMaterialNetworkSchema network)
   HdMaterialNodeContainerSchema nodes = network.GetNodes();
   for (const TfToken &nodeName : nodes.GetNames()) {
     HdMaterialNodeSchema node = nodes.Get(nodeName);
-    const TfToken type = node.GetNodeIdentifier() ?
-                             node.GetNodeIdentifier()->GetTypedValue(0.0f) :
-                             TfToken();
+    const TfToken type = node.GetNodeIdentifier() ? node.GetNodeIdentifier()->GetTypedValue(0.0f) :
+                                                    TfToken();
     HdMaterialNodeParameterContainerSchema params = node.GetParameters();
 
     std::vector<TfToken> names;
@@ -462,12 +459,10 @@ array<int> FindUdimTiles(const string &filename)
 
   std::vector<int> found;
   std::error_code error;
-  for (const auto &entry :
-       std::filesystem::directory_iterator(path_dirname(filename), error))
-  {
+  for (const auto &entry : std::filesystem::directory_iterator(path_dirname(filename), error)) {
     const string candidate = entry.path().filename().string();
-    if (candidate.size() != prefix.size() + 4 + suffix.size() ||
-        !candidate.starts_with(prefix) || !candidate.ends_with(suffix))
+    if (candidate.size() != prefix.size() + 4 + suffix.size() || !candidate.starts_with(prefix) ||
+        !candidate.ends_with(suffix))
     {
       continue;
     }
@@ -807,7 +802,8 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
       continue;
     }
 
-    ShaderOutput *output = ResolveOutput(srcNodeIt->second, upstreamOutputName, input, shaderGraph);
+    ShaderOutput *output = ResolveOutput(
+        srcNodeIt->second, upstreamOutputName, input, shaderGraph);
 
     if (!output) {
       HDCYCLES_WARN("Ignoring connection from '%s.%s' to '%s.%s', output '%s' was not found",
@@ -899,13 +895,12 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
 
     GfVec4f scale(1.0f, 1.0f, 1.0f, 1.0f);
     GfVec4f bias(0.0f, 0.0f, 0.0f, 0.0f);
-    const bool hasScale = ReadParam(nodeSchema.GetParameters(), CyclesMaterialTokens->scale, &scale);
+    const bool hasScale = ReadParam(
+        nodeSchema.GetParameters(), CyclesMaterialTokens->scale, &scale);
     const bool hasBias = ReadParam(nodeSchema.GetParameters(), CyclesMaterialTokens->bias, &bias);
 
-    const bool nonDefaultScale = hasScale &&
-                                 (scale != GfVec4f(1.0f, 1.0f, 1.0f, 1.0f));
-    const bool nonDefaultBias = hasBias &&
-                                (bias != GfVec4f(0.0f, 0.0f, 0.0f, 0.0f));
+    const bool nonDefaultScale = hasScale && (scale != GfVec4f(1.0f, 1.0f, 1.0f, 1.0f));
+    const bool nonDefaultBias = hasBias && (bias != GfVec4f(0.0f, 0.0f, 0.0f, 0.0f));
 
     if (!nonDefaultScale && !nonDefaultBias) {
       continue;
@@ -1042,7 +1037,9 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
     /* -- displacement constant --
      * A non-zero authored constant for the displacement node made at terminal time; a
      * connection replaces it in UpdateConnections. A zero displacement needs no node. */
-    if (ReadParam(params, CyclesMaterialTokens->displacement, &nodeIt->second.displacementConstant)) {
+    if (ReadParam(
+            params, CyclesMaterialTokens->displacement, &nodeIt->second.displacementConstant))
+    {
       nodeIt->second.hasDisplacement = nodeIt->second.displacementConstant != 0.0f;
     }
   }
@@ -1115,8 +1112,7 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
           else {
             dispNode->set_height(surface.displacementConstant);
           }
-          graph->connect(dispNode->output("Displacement"),
-                         graph->output()->input("Displacement"));
+          graph->connect(dispNode->output("Displacement"), graph->output()->input("Displacement"));
         }
         continue;
       }
@@ -1172,7 +1168,8 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
     }
 
     float threshold = 0.0f;
-    if (!ReadParam(nodeSchema.GetParameters(), CyclesMaterialTokens->opacityThreshold, &threshold) ||
+    if (!ReadParam(
+            nodeSchema.GetParameters(), CyclesMaterialTokens->opacityThreshold, &threshold) ||
         threshold <= 0.0f)
     {
       continue;
