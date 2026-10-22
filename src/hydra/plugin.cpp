@@ -13,6 +13,10 @@
 #include <pxr/base/plug/thisPlugin.h>
 #include <pxr/base/tf/envSetting.h>
 #include <pxr/imaging/hd/rendererPluginRegistry.h>
+#include <pxr/imaging/hd/retainedDataSource.h>
+#include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
+#include <pxr/imaging/hd/tokens.h>
+#include <pxr/imaging/hdsi/implicitSurfaceSceneIndex.h>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -74,6 +78,38 @@ void HdCyclesPlugin::DeleteRenderDelegate(HdRenderDelegate *renderDelegate)
 TF_REGISTRY_FUNCTION(TfType)
 {
   HdRendererPluginRegistry::Define<PXR_NS::HdCyclesPlugin>();
+}
+
+// Cycles has no implicit surfaces, so turn UsdGeom spheres, cubes, cones, cylinders, capsules
+// and planes into meshes before they reach the delegate, as Storm and HdPrman do.
+TF_REGISTRY_FUNCTION(HdSceneIndexPlugin)
+{
+  const HdDataSourceBaseHandle toMesh = HdRetainedTypedSampledDataSource<TfToken>::New(
+      HdsiImplicitSurfaceSceneIndexTokens->toMesh);
+  const HdContainerDataSourceHandle inputArgs = HdRetainedContainerDataSource::New(
+      HdPrimTypeTokens->sphere,
+      toMesh,
+      HdPrimTypeTokens->cube,
+      toMesh,
+      HdPrimTypeTokens->cone,
+      toMesh,
+      HdPrimTypeTokens->cylinder,
+      toMesh,
+      HdPrimTypeTokens->capsule,
+      toMesh,
+      HdPrimTypeTokens->plane,
+      toMesh);
+
+  HdSceneIndexPluginRegistry::GetInstance().RegisterSceneIndexForRenderer(
+      "Cycles",
+      [](const std::string & /*renderInstanceId*/,
+         const HdSceneIndexBaseRefPtr &inputScene,
+         const HdContainerDataSourceHandle &inputArgs) -> HdSceneIndexBaseRefPtr {
+        return HdsiImplicitSurfaceSceneIndex::New(inputScene, inputArgs);
+      },
+      inputArgs,
+      0,
+      HdSceneIndexPluginRegistry::InsertionOrderAtStart);
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE
