@@ -220,9 +220,10 @@ class UsdToCyclesTexture : public UsdToCyclesMapping {
             *value = VtValue(TfToken(named.string()));
             return "colorspace";
           }
-          HDCYCLES_WARN("UsdUVTexture colour space '%s' is not in the OCIO config; detecting it "
-                  "from the file instead",
-                  valueToken.GetText());
+          HDCYCLES_WARN(
+              "UsdUVTexture colour space '%s' is not in the OCIO config; detecting it "
+              "from the file instead",
+              valueToken.GetText());
         }
         /* "auto", or a colorspace the config lacks: reset to Cycles' automatic detection from
          * the file and the config's file rules. */
@@ -250,8 +251,8 @@ class UsdToCyclesPreviewSurface : public UsdToCyclesMapping {
       const SocketType *input = node->type->find_input(ustring(name));
       if (!input) {
         HDCYCLES_WARN("UsdPreviewSurface: Cycles node '%s' has no input '%s'",
-                node->type->name.c_str(),
-                name);
+                      node->type->name.c_str(),
+                      name);
       }
       return input;
     };
@@ -582,9 +583,9 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
 
     if (!input) {
       HDCYCLES_WARN("Could not find parameter '%s' on node '%s' ('%s')",
-              paramName.GetText(),
-              nodePath.GetText(),
-              nodeDesc.node->name.c_str());
+                    paramName.GetText(),
+                    nodePath.GetText(),
+                    nodeDesc.node->name.c_str());
       continue;
     }
 
@@ -771,9 +772,9 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
 
     if (!input) {
       HDCYCLES_WARN("Ignoring connection on '%s.%s', input '%s' was not found",
-              nodePath.GetText(),
-              dstSocketName.GetText(),
-              dstSocketName.GetText());
+                    nodePath.GetText(),
+                    dstSocketName.GetText(),
+                    dstSocketName.GetText());
       continue;
     }
 
@@ -798,11 +799,11 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
     const auto srcNodeIt = _nodes.find(upstreamNodePath);
     if (srcNodeIt == _nodes.end()) {
       HDCYCLES_WARN("Ignoring connection from '%s.%s' to '%s.%s', node '%s' was not found",
-              upstreamNodePath.GetText(),
-              upstreamOutputName.GetText(),
-              nodePath.GetText(),
-              dstSocketName.GetText(),
-              upstreamNodePath.GetText());
+                    upstreamNodePath.GetText(),
+                    upstreamOutputName.GetText(),
+                    nodePath.GetText(),
+                    dstSocketName.GetText(),
+                    upstreamNodePath.GetText());
       continue;
     }
 
@@ -810,11 +811,11 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
 
     if (!output) {
       HDCYCLES_WARN("Ignoring connection from '%s.%s' to '%s.%s', output '%s' was not found",
-              upstreamNodePath.GetText(),
-              upstreamOutputName.GetText(),
-              nodePath.GetText(),
-              dstSocketName.GetText(),
-              upstreamOutputName.GetText());
+                    upstreamNodePath.GetText(),
+                    upstreamOutputName.GetText(),
+                    nodePath.GetText(),
+                    dstSocketName.GetText(),
+                    upstreamOutputName.GetText());
       continue;
     }
 
@@ -1137,16 +1138,16 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
     ShaderInput *const input = inputName ? graph->output()->input(inputName) : nullptr;
     if (!input) {
       HDCYCLES_ERROR("Could not find terminal input '%s.%s'",
-                       upstreamNodePath.GetText(),
-                       inputName ? inputName : "<null>");
+                     upstreamNodePath.GetText(),
+                     inputName ? inputName : "<null>");
       continue;
     }
 
     ShaderOutput *const output = outputName ? node->output(outputName) : nullptr;
     if (!output) {
       HDCYCLES_ERROR("Could not find terminal output '%s.%s'",
-                       upstreamNodePath.GetText(),
-                       outputName ? outputName : "<null>");
+                     upstreamNodePath.GetText(),
+                     outputName ? outputName : "<null>");
       continue;
     }
 

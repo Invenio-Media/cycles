@@ -13,7 +13,8 @@
 
 /* husk shows Cycles' log but not Tf diagnostics, at any verbosity, so the delegate reports
  * problems through both: Tf for hosts that collect its diagnostics, Cycles' log for husk and
- * the terminal. Arguments are printf-style, as for TF_WARN. */
+ * the terminal. A host that prints Tf diagnostics to the terminal too shows each message
+ * twice there. Arguments are printf-style, as for TF_WARN. */
 #define HDCYCLES_WARN(...) \
   do { \
     const std::string hdcycles_message_ = PXR_NS::TfStringPrintf(__VA_ARGS__); \

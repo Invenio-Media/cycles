@@ -4,9 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/render_delegate.h"
-#include "hydra/diagnostic.h"
+#include "graph/node_enum.h"
 #include "hydra/camera.h"
 #include "hydra/curves.h"
+#include "hydra/diagnostic.h"
 #include "hydra/field.h"
 #include "hydra/instancer.h"
 #include "hydra/light.h"
@@ -18,10 +19,9 @@
 #include "hydra/render_pass.h"
 #include "hydra/session.h"
 #include "hydra/volume.h"
-#include "graph/node_enum.h"
 #include "scene/film.h"
-#include "scene/light.h"
 #include "scene/integrator.h"
+#include "scene/light.h"
 #include "scene/scene.h"
 #include "scene/shader.h"
 #include "session/session.h"
@@ -282,9 +282,8 @@ std::pair<SessionParams, std::string> HdCyclesDelegate::BuildSessionParams() con
     const DeviceType type = Device::type_from_string(deviceType.c_str());
     vector<DeviceInfo> devs = Device::available_devices(DEVICE_MASK(type));
     if (devs.empty()) {
-      HDCYCLES_WARN(
-          "Cycles: device type '%s' has no available devices; falling back to CPU",
-          deviceType.c_str());
+      HDCYCLES_WARN("Cycles: device type '%s' has no available devices; falling back to CPU",
+                    deviceType.c_str());
       devs = Device::available_devices(DEVICE_MASK_CPU);
       effectiveDeviceType = Device::string_from_type(DEVICE_CPU);
     }
@@ -414,8 +413,9 @@ void HdCyclesDelegate::ApplyRenderingColorSpace(std::string colorSpace)
 {
   _requestedColorSpace = colorSpace;
   if (!CCL_NS::ColorSpaceManager::set_scene_linear_colorspace(colorSpace)) {
-    HDCYCLES_WARN("Rendering color space '%s' is not in the OCIO config, using its scene_linear role",
-            colorSpace.c_str());
+    HDCYCLES_WARN(
+        "Rendering color space '%s' is not in the OCIO config, using its scene_linear role",
+        colorSpace.c_str());
     colorSpace.clear();
     CCL_NS::ColorSpaceManager::set_scene_linear_colorspace(colorSpace);
   }
