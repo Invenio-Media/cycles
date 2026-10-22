@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/node_util.h"
+#include "util/log.h"
 #include "util/transform.h"
 
 #include <pxr/base/gf/matrix3d.h>
@@ -12,6 +13,7 @@
 #include <pxr/base/gf/matrix4f.h>
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec3f.h>
+#include <pxr/base/tf/pathUtils.h>
 #include <pxr/base/vt/array.h>
 #include <pxr/usd/sdf/assetPath.h>
 
@@ -74,10 +76,19 @@ template<> ustring convertToCycles<ustring>(const VtValue &value)
   }
   if (value.IsHolding<SdfAssetPath>()) {
     const SdfAssetPath &path = value.UncheckedGet<SdfAssetPath>();
-    /* A path that does not resolve, such as a missing file, keeps its authored form, so that
-     * Cycles' warning about it names the file. */
-    return ustring(path.GetResolvedPath().empty() ? path.GetAssetPath() :
-                                                    path.GetResolvedPath());
+    const std::string &resolved = path.GetResolvedPath();
+    if (!resolved.empty() || path.GetAssetPath().empty()) {
+      return ustring(resolved);
+    }
+    /* A path that does not resolve, such as a missing file. An absolute one is passed on, so
+     * that Cycles' warning names the file; a relative one is not, as Cycles would look for it
+     * relative to its working directory instead of the layer. */
+    if (!TfIsRelativePath(path.GetAssetPath())) {
+      return ustring(path.GetAssetPath());
+    }
+    /* Cycles' log, which husk shows; it does not show Tf warnings. */
+    LOG_WARNING << "Asset " << path.GetAssetPath() << " does not resolve";
+    return ustring();
   }
 
   if (value.CanCast<TfToken>()) {
