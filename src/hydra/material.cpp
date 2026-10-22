@@ -12,6 +12,9 @@
 #include "scene/shader_graph.h"
 #include "scene/shader_nodes.h"
 #include "util/colorspace.h"
+#include "util/path.h"
+
+#include <filesystem>
 
 #include <pxr/imaging/hd/material.h>
 #include <pxr/imaging/hd/materialConnectionSchema.h>
@@ -437,6 +440,42 @@ std::string StructuralKey(HdMaterialNetworkSchema network)
   return key;
 }
 
+/* The UDIM tiles on disk for a filename with a <UDIM> token, in order; none without the token.
+ * Cycles loads only the tiles an image texture node lists. */
+array<int> FindUdimTiles(const string &filename)
+{
+  array<int> tiles;
+  const string name = path_filename(filename);
+  const size_t token = name.find("<UDIM>");
+  if (token == string::npos) {
+    return tiles;
+  }
+  const string prefix = name.substr(0, token);
+  const string suffix = name.substr(token + strlen("<UDIM>"));
+
+  std::vector<int> found;
+  std::error_code error;
+  for (const auto &entry :
+       std::filesystem::directory_iterator(path_dirname(filename), error))
+  {
+    const string candidate = entry.path().filename().string();
+    if (candidate.size() != prefix.size() + 4 + suffix.size() ||
+        !candidate.starts_with(prefix) || !candidate.ends_with(suffix))
+    {
+      continue;
+    }
+    const string digits = candidate.substr(prefix.size(), 4);
+    if (std::all_of(digits.begin(), digits.end(), ::isdigit) && std::stoi(digits) >= 1001) {
+      found.push_back(std::stoi(digits));
+    }
+  }
+  std::sort(found.begin(), found.end());
+  for (const int tile : found) {
+    tiles.push_back_slow(tile);
+  }
+  return tiles;
+}
+
 }  // namespace
 
 HdCyclesMaterial::HdCyclesMaterial(const SdfPath &sprimId) : HdMaterial(sprimId) {}
@@ -565,6 +604,14 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
         SetNodeValue(nodeDesc.node, *input, value);
       }
     }
+  }
+
+  /* A <UDIM> filename needs the tiles listed, which Blender takes from its image and USD
+   * leaves to the files on disk. */
+  if (nodeDesc.node->type->name == "image_texture") {
+    auto *image = static_cast<ImageTextureNode *>(nodeDesc.node);
+    array<int> tiles = FindUdimTiles(image->get_filename().string());
+    image->set_tiles(tiles);
   }
 }
 
