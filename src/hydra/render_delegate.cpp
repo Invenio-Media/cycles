@@ -781,13 +781,15 @@ VtDictionary HdCyclesDelegate::GetRenderStats() const
                               {"renderProgressAnnotation", VtValue(status)},
                               {"huskErrorStatus", VtValue(progress.get_error() ? 1 : 0)}};
 
-  for (const auto &[key, value] : GetCryptomatteStats()) {
+  // husk reads the stats for the image once the render is complete, when the scene is not
+  // being updated: wait for it then, so the image never gets a missing or stale manifest.
+  for (const auto &[key, value] : GetCryptomatteStats(fractionDone >= 1.0)) {
     renderStats[key] = value;
   }
   return renderStats;
 }
 
-VtDictionary HdCyclesDelegate::GetCryptomatteStats() const
+VtDictionary HdCyclesDelegate::GetCryptomatteStats(const bool waitForScene) const
 {
   // Cryptomatte metadata for each type being rendered, which UsdRenderers.json's
   // husk.metadata writes into the image as the cryptomatte specification names it. Types not
@@ -796,8 +798,11 @@ VtDictionary HdCyclesDelegate::GetCryptomatteStats() const
   Scene *const scene = _renderParam->session->scene.get();
   // The session holds the scene through whole updates, BVH builds among them, while hosts
   // poll the stats for progress.
-  const thread_scoped_lock sceneLock(scene->mutex, std::try_to_lock);
-  if (!sceneLock.owns_lock()) {
+  thread_scoped_lock sceneLock(scene->mutex, std::defer_lock);
+  if (waitForScene) {
+    sceneLock.lock();
+  }
+  else if (!sceneLock.try_lock()) {
     return _cryptomatteStats;
   }
   const int types = scene->film->get_cryptomatte_passes();

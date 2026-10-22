@@ -165,9 +165,9 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
   // does not have, means the config's scene_linear role.
   void ApplyRenderingColorSpace(std::string colorSpace);
 
-  // The cryptomatte render stats, from the cache unless the scene changed. Never waits for
-  // the scene: while it is being updated, the cache is returned.
-  PXR_NS::VtDictionary GetCryptomatteStats() const;
+  // The cryptomatte render stats, from the cache unless the scene changed. Unless told to
+  // wait for the scene, returns the cache while the scene is being updated.
+  PXR_NS::VtDictionary GetCryptomatteStats(bool waitForScene) const;
 
   // Rebuild the Cycles Session from _restartSettings, then replay _appliedSettings.
   void RebuildSession();
