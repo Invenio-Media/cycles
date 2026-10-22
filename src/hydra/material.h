@@ -47,6 +47,12 @@ class HdCyclesMaterial final : public PXR_NS::HdMaterial {
     CCL_NS::ShaderNode *scaleBiasAlpha = nullptr; /* math multiply_add */
     /* Created lazily when an r/g/b output is first consumed. */
     CCL_NS::ShaderNode *separateColor = nullptr; /* separate_color */
+    /* UsdPreviewSurface: the ×0.5+0.5 remap in front of its normal map, when it has one. */
+    CCL_NS::ShaderNode *normalRemap = nullptr;
+    /* UsdPreviewSurface displacement: the connected output, or else the authored constant. */
+    CCL_NS::ShaderOutput *displacementOutput = nullptr;
+    float displacementConstant = 0.0f;
+    bool hasDisplacement = false;
   };
 
   void Initialize(PXR_NS::HdRenderParam *renderParam);
@@ -64,30 +70,22 @@ class HdCyclesMaterial final : public PXR_NS::HdMaterial {
 
   void PopulateShaderGraph(PXR_NS::HdMaterialNetworkSchema network);
 
-  /* Resolve the ShaderOutput* for (srcPath, outputToken) from a UsdUVTexture,
-   * accounting for scale/bias chains and single-channel extraction.
-   * Creates a separate_color node lazily on first r/g/b use. */
-  CCL_NS::ShaderOutput *ResolveTextureOutput(NodeDesc &srcDesc,
-                                             const PXR_NS::SdfPath &srcPath,
-                                             const PXR_NS::TfToken &outputName,
-                                             CCL_NS::ShaderInput *destInput,
-                                             CCL_NS::ShaderGraph *graph);
+  /* The output an upstream node provides for a USD output name. For a UsdUVTexture this
+   * accounts for scale/bias chains and single-channel extraction, creating a separate_color
+   * node on first r/g/b use. */
+  CCL_NS::ShaderOutput *ResolveOutput(NodeDesc &srcDesc,
+                                      const PXR_NS::TfToken &outputName,
+                                      CCL_NS::ShaderInput *destInput,
+                                      CCL_NS::ShaderGraph *graph);
 
   CCL_NS::Shader *_shader = nullptr;
   std::unordered_map<PXR_NS::SdfPath, NodeDesc, PXR_NS::SdfPath::Hash> _nodes;
 
-  /* Normal map chain nodes for UsdPreviewSurface (null when none was needed). */
-  CCL_NS::ShaderNode *_normalRemapNode = nullptr; /* vector_math multiply_add ×0.5+0.5 */
-  CCL_NS::ShaderNode *_normalMapNode = nullptr;   /* normal_map (tangent space) */
-
-  /* Upstream output to route to the Cycles displacement node (null = use constant). */
-  CCL_NS::ShaderOutput *_displacementOutput = nullptr;
-  float _displacementConstant = 0.0f;
-  bool _hasDisplacement = false;
-
-  /* When true, DirtyParams triggers a full graph rebuild because auxiliary nodes
-   * (scale/bias chains, normal_map) require it to stay in sync with parameters. */
-  bool _rebuildOnDirtyParams = false;
+  /* The parameters that add or remove helper nodes (UsdUVTexture scale/bias,
+   * UsdPreviewSurface normal, cutout, displacement and specular workflow) as of the last
+   * graph build. A parameter edit that changes them rebuilds the graph; any other edit
+   * updates the nodes in place. */
+  std::string _structuralKey;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE
