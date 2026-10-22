@@ -1059,7 +1059,8 @@ bool MaterialXTranslator::TranslateNode(const std::string &family)
      * channel differently from Cycles' Color output: the same noise, other values. */
     const bool is2d = family == "noise2d";
     const bool scalar = IsFloatType();
-    /* Cycles' detail is 0 to 15: fractal3d with no octaves is zero, and above 16 it stops. */
+    /* Cycles' detail is 0 to 15: fractal3d with no octaves is zero, and above 16 it stops. A
+     * connected octaves goes to detail as is, where Cycles clamps it. */
     const float octaves = family == "fractal3d" ? ConstantFloat("octaves", 1.0f) : 1.0f;
     if (octaves < 1.0f) {
       Provide("out", Operand::Constant(scalar ? VtValue(0.0f) : VtValue(GfVec3f(0.0f))));
