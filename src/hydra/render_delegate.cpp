@@ -544,31 +544,34 @@ void HdCyclesDelegate::DestroyInstancer(HdInstancer *instancer)
 
 HdRprim *HdCyclesDelegate::CreateRprim(const TfToken &typeId, const SdfPath &rprimId)
 {
-  // Any real Rprim marks the end of the pre-prim window.
-  ++_realPrimCount;
-
+  HdRprim *prim = nullptr;
   if (typeId == HdPrimTypeTokens->mesh) {
-    return new HdCyclesMesh(rprimId);
+    prim = new HdCyclesMesh(rprimId);
   }
-  if (typeId == HdPrimTypeTokens->basisCurves) {
-    return new HdCyclesCurves(rprimId);
+  else if (typeId == HdPrimTypeTokens->basisCurves) {
+    prim = new HdCyclesCurves(rprimId);
   }
-  if (typeId == HdPrimTypeTokens->points) {
-    return new HdCyclesPoints(rprimId);
+  else if (typeId == HdPrimTypeTokens->points) {
+    prim = new HdCyclesPoints(rprimId);
   }
 #ifdef WITH_OPENVDB
-  if (typeId == HdPrimTypeTokens->volume) {
-    return new HdCyclesVolume(rprimId);
+  else if (typeId == HdPrimTypeTokens->volume) {
+    prim = new HdCyclesVolume(rprimId);
   }
 #endif
-
-  TF_CODING_ERROR("Unknown Rprim type %s", typeId.GetText());
-  return nullptr;
+  else {
+    TF_CODING_ERROR("Unknown Rprim type %s", typeId.GetText());
+  }
+  // Only count prims that were actually created; unknown type -> nullptr must not leak.
+  if (prim) {
+    ++_realPrimCount;
+  }
+  return prim;
 }
 
 void HdCyclesDelegate::DestroyRprim(HdRprim *rPrim)
 {
-  if (_realPrimCount > 0) {
+  if (rPrim && _realPrimCount > 0) {
     --_realPrimCount;
   }
   delete rPrim;
