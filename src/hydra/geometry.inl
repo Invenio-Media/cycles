@@ -6,6 +6,7 @@
 #include "hydra/geometry.h"
 #include "hydra/instancer.h"
 #include "hydra/material.h"
+#include "hydra/object_settings.h"
 #include "hydra/session.h"
 #include "hydra/util.h"
 #include "scene/geometry.h"
@@ -161,9 +162,16 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
     }
   }
 
-  if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {
+  /* Visibility and the cycles:object: primvars, on every sync: they can change with the
+   * primvars or the visibility, and new instances need them. Setting an unchanged value does
+   * not tag the object. */
+  {
+    const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(primDs);
+    const HdCyclesSettingReader read = [&primvars](const char *name) {
+      return ReadPrimvar(primvars, TfToken(std::string("cycles:object:") + name));
+    };
     for (Object *instance : _instances) {
-      instance->set_visibility(Base::IsVisible() ? PATH_RAY_VISIBILITY_ALL : 0);
+      HdCyclesApplyObjectSettings(instance, Base::IsVisible() ? PATH_RAY_VISIBILITY_ALL : 0, read);
     }
   }
 

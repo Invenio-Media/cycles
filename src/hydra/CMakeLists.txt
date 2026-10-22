@@ -36,6 +36,7 @@ set(SRC_HD_CYCLES_HEADERS
   materialx.h
   mesh.h
   node_util.h
+  object_settings.h
   output_driver.h
   pointcloud.h
   render_buffer.h
@@ -58,6 +59,7 @@ set(SRC_HD_CYCLES
   materialx.cpp
   mesh.cpp
   node_util.cpp
+  object_settings.cpp
   output_driver.cpp
   pointcloud.cpp
   render_buffer.cpp

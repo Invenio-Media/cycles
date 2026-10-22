@@ -4,9 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/light.h"
+#include "hydra/object_settings.h"
 #include "hydra/session.h"
 #include "hydra/util.h"
 #include "kernel/types.h"
+#include "scene/background.h"
 #include "scene/light.h"
 #include "scene/object.h"
 #include "scene/scene.h"
@@ -98,17 +100,25 @@ void HdCyclesLight::Sync(HdSceneDelegate *sceneDelegate,
 
     _light->set_normalize(GetTypedValue<bool>(lightDs, HdLightTokens->normalize, false));
 
-    if (auto ds = GetTypedDataSource<bool>(lightDs, _tokens->visibleInPrimaryRay)) {
-      if (ds->GetTypedValue(0.0f)) {
-        _object->set_visibility(_object->get_visibility() | PATH_RAY_VISIBILITY_CAMERA);
-      }
-      else {
-        _object->set_visibility(_object->get_visibility() & ~PATH_RAY_VISIBILITY_CAMERA);
-      }
+    /* Visible to the camera only when UsdLux says so. The cycles:light: settings can take
+     * other rays away, and set the light's own Cycles settings. */
+    unsigned visibility = PATH_RAY_VISIBILITY_ALL & ~PATH_RAY_VISIBILITY_CAMERA;
+    if (GetTypedValue<bool>(lightDs, _tokens->visibleInPrimaryRay, false)) {
+      visibility |= PATH_RAY_VISIBILITY_CAMERA;
     }
-
-    if (auto ds = GetTypedDataSource<bool>(lightDs, HdLightTokens->shadowEnable)) {
-      _light->set_cast_shadow(ds->GetTypedValue(0.0f));
+    /* Hydra hands a light's other attributes over as light parameters. */
+    const HdCyclesSettingReader read = [sceneDelegate, &id](const char *name) {
+      return sceneDelegate->GetLightParamValue(id, TfToken(std::string("cycles:light:") + name));
+    };
+    HdCyclesApplyObjectSettings(_object, visibility, read);
+    _light->set_cast_shadow(HdCyclesSettingValue<bool>(
+        read("cast_shadow"), GetTypedValue<bool>(lightDs, HdLightTokens->shadowEnable, true)));
+    _light->set_use_mis(HdCyclesSettingValue<bool>(read("use_mis"), true));
+    _light->set_use_caustics(HdCyclesSettingValue<bool>(read("use_caustics"), false));
+    _light->set_max_bounces(HdCyclesSettingValue<int>(read("max_bounces"), 1024));
+    /* A dome lights the scene through the background, whose light group is its own. */
+    if (_lightType == HdPrimTypeTokens->domeLight) {
+      lock.scene->background->set_lightgroup(_object->get_lightgroup());
     }
 
     if (_lightType == HdPrimTypeTokens->distantLight) {

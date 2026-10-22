@@ -296,6 +296,21 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
       continue;
     }
 
+    /* lightgroup:<name> is the beauty lit only by the lights, emitters and background in that
+     * light group. Cycles makes a light group of each pass's group name. */
+    const std::string &source = sourceName.GetString();
+    if (source.starts_with("lightgroup:") && source.size() > strlen("lightgroup:")) {
+      aovPass.passName = source;
+      if (createdPasses.insert(source).second) {
+        Pass *pass = scene->create_node<Pass>();
+        pass->set_type(PASS_COMBINED);
+        pass->set_mode(PassMode::DENOISED);
+        pass->set_name(ustring(source));
+        pass->set_lightgroup(ustring(source.substr(strlen("lightgroup:"))));
+      }
+      continue;
+    }
+
     const PassType type = HdCyclesPassTypeForAov(sourceName);
     if (type == PASS_NONE) {
       // elementId is a standard Hydra AOV that Cycles has no pass for.
