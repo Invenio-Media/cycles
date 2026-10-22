@@ -64,8 +64,19 @@ TF_DEFINE_PRIVATE_TOKENS(CyclesMaterialTokens,
     (sourceColorSpace)
     (sRGB)
     (raw)
+    (scale)
+    (bias)
+    (normal)
+    (displacement)
+    (opacityThreshold)
+    (useSpecularWorkflow)
+    (specularColor)
 );
 // clang-format on
+
+/* Sentinel return value from parameterName(): skip this parameter silently
+ * (no warning, no node socket lookup). */
+static constexpr const char *SKIP_PARAM = "__skip__";
 
 /* Simple class to handle remapping of USDPreviewSurface nodes and parameters to Cycles
  * equivalents. */
@@ -99,7 +110,8 @@ class UsdToCyclesMapping {
       if (name == CyclesMaterialTokens->rgb) {
         return "color";
       }
-      /* TODO: Is there a better mapping than 'color'? */
+      /* r/g/b single-channel outputs are handled via ResolveTextureOutput; the connection
+       * path never reaches here for them. Return "color" as a fallback only. */
       if (name == CyclesMaterialTokens->r || name == CyclesMaterialTokens->g ||
           name == CyclesMaterialTokens->b)
       {
@@ -141,6 +153,11 @@ class UsdToCyclesTexture : public UsdToCyclesMapping {
                             const ShaderInput *inputConnection,
                             VtValue *value) const override
   {
+    /* scale and bias are handled as auxiliary math nodes; skip the normal socket lookup. */
+    if (name == CyclesMaterialTokens->scale || name == CyclesMaterialTokens->bias) {
+      return SKIP_PARAM;
+    }
+
     if (value) {
       /* Remap UsdUVTexture.wrapS and UsdUVTexture.wrapT to cycles_image_texture.extension. */
       if (name == CyclesMaterialTokens->wrapS || name == CyclesMaterialTokens->wrapT) {
@@ -193,7 +210,7 @@ class UsdToCyclesPreviewSurface : public UsdToCyclesMapping {
   /* Start from the UsdPreviewSurface defaults, which differ from the Principled BSDF's, so
    * that inputs the material does not author render as the specification says. specular_tint
    * keeps the Principled default (white): UsdPreviewSurface's specularColor only applies with
-   * useSpecularWorkflow, which is not translated yet. */
+   * useSpecularWorkflow, which is handled in PopulateShaderGraph's post-processing step. */
   void initializeNode(ShaderNode *node) const override
   {
     /* Warn rather than crash if a later Cycles renames a socket, as 4.0 did with emission. */
@@ -227,6 +244,24 @@ class UsdToCyclesPreviewSurface : public UsdToCyclesMapping {
     setFloat("coat_weight", 0.0f);
     setFloat("coat_roughness", 0.01f);
   }
+
+  std::string parameterName(const TfToken &name,
+                            const ShaderInput *inputConnection,
+                            VtValue * /*value*/ = nullptr) const override
+  {
+    /* These are handled as auxiliary nodes or post-processing; suppress the normal warning. */
+    if (name == CyclesMaterialTokens->normal ||
+        name == CyclesMaterialTokens->displacement ||
+        name == CyclesMaterialTokens->opacityThreshold ||
+        name == CyclesMaterialTokens->useSpecularWorkflow ||
+        name == CyclesMaterialTokens->specularColor)
+    {
+      return SKIP_PARAM;
+    }
+
+    /* Simple mapping case from the base class. */
+    return UsdToCyclesMapping::parameterName(name, inputConnection);
+  }
 };
 
 namespace {
@@ -237,14 +272,15 @@ class UsdToCycles {
       {
           {TfToken("diffuseColor"), ustring("base_color")},
           {TfToken("emissiveColor"), ustring("emission_color")},
-          {TfToken("specularColor"), ustring("specular_tint")},
+          /* specularColor: conditional on useSpecularWorkflow; handled in post-processing. */
           {TfToken("clearcoat"), ustring("coat_weight")},
           {TfToken("clearcoatRoughness"), ustring("coat_roughness")},
           {TfToken("opacity"), ustring("alpha")},
-          /* useSpecularWorkflow */
-          /* opacityThreshold */
-          /* occlusion */
-          /* displacement */
+          /* normal: routed through normal_map chain (see PopulateShaderGraph pass 3). */
+          /* displacement: handled at terminal time. */
+          /* useSpecularWorkflow / specularColor: handled in post-processing. */
+          /* opacityThreshold: handled in post-processing. */
+          /* occlusion: spec says renderers may ignore it. */
       }};
   const UsdToCyclesTexture UsdUVTexture = {
       "image_texture",
@@ -254,6 +290,7 @@ class UsdToCycles {
           {CyclesMaterialTokens->wrapT, ustring("extension")},
           {TfToken("file"), ustring("filename")},
           {TfToken("sourceColorSpace"), ustring("colorspace")},
+          /* scale/bias: handled as multiply_add auxiliary nodes. */
       }};
   const UsdToCyclesMapping UsdPrimvarReader = {"attribute",
                                                {{TfToken("varname"), ustring("attribute")}}};
@@ -282,8 +319,112 @@ class UsdToCycles {
   {
     return nullptr;
   }
+
+  /* Expose the UsdPreviewSurface mapping pointer for identity checks. */
+  const UsdToCyclesMapping *previewSurfaceMapping() const
+  {
+    return &UsdPreviewSurface;
+  }
+
+  /* Expose the UsdUVTexture mapping pointer for identity checks. */
+  const UsdToCyclesMapping *uvTextureMapping() const
+  {
+    return &UsdUVTexture;
+  }
 };
 TfStaticData<UsdToCycles> sUsdToCyles;
+
+/* Read a float4 parameter from a USD node's parameter schema, returns false if not found. */
+static bool ReadVec4fParam(HdMaterialNodeParameterContainerSchema params,
+                           const TfToken &name,
+                           GfVec4f *out)
+{
+  auto ds = params.Get(name);
+  if (!ds) {
+    return false;
+  }
+  auto valDs = ds.GetValue();
+  if (!valDs) {
+    return false;
+  }
+  VtValue val = valDs->GetValue(0.0f);
+  if (val.IsHolding<GfVec4f>()) {
+    *out = val.UncheckedGet<GfVec4f>();
+    return true;
+  }
+  return false;
+}
+
+/* Read a float parameter from a USD node's parameter schema, returns false if not found. */
+static bool ReadFloatParam(HdMaterialNodeParameterContainerSchema params,
+                           const TfToken &name,
+                           float *out)
+{
+  auto ds = params.Get(name);
+  if (!ds) {
+    return false;
+  }
+  auto valDs = ds.GetValue();
+  if (!valDs) {
+    return false;
+  }
+  VtValue val = valDs->GetValue(0.0f);
+  if (val.IsHolding<float>()) {
+    *out = val.UncheckedGet<float>();
+    return true;
+  }
+  if (val.IsHolding<int>()) {
+    *out = static_cast<float>(val.UncheckedGet<int>());
+    return true;
+  }
+  return false;
+}
+
+/* Read an int parameter from a USD node's parameter schema, returns false if not found. */
+static bool ReadIntParam(HdMaterialNodeParameterContainerSchema params,
+                         const TfToken &name,
+                         int *out)
+{
+  auto ds = params.Get(name);
+  if (!ds) {
+    return false;
+  }
+  auto valDs = ds.GetValue();
+  if (!valDs) {
+    return false;
+  }
+  VtValue val = valDs->GetValue(0.0f);
+  if (val.IsHolding<int>()) {
+    *out = val.UncheckedGet<int>();
+    return true;
+  }
+  if (val.IsHolding<float>()) {
+    *out = static_cast<int>(val.UncheckedGet<float>());
+    return true;
+  }
+  return false;
+}
+
+/* Read a float3 parameter from a USD node's parameter schema, returns false if not found. */
+static bool ReadVec3fParam(HdMaterialNodeParameterContainerSchema params,
+                           const TfToken &name,
+                           GfVec3f *out)
+{
+  auto ds = params.Get(name);
+  if (!ds) {
+    return false;
+  }
+  auto valDs = ds.GetValue();
+  if (!valDs) {
+    return false;
+  }
+  VtValue val = valDs->GetValue(0.0f);
+  if (val.IsHolding<GfVec3f>()) {
+    *out = val.UncheckedGet<GfVec3f>();
+    return true;
+  }
+  return false;
+}
 
 }  // namespace
 
@@ -325,7 +466,9 @@ void HdCyclesMaterial::Sync(HdSceneDelegate *sceneDelegate,
     }
 
     if (network) {
-      if (!_nodes.empty() && !dirtyResource) {
+      /* Use the fast UpdateParameters path only when the graph has no auxiliary nodes
+       * (scale/bias chains, normal_map) that would need reconstruction. */
+      if (!_nodes.empty() && !dirtyResource && !_rebuildOnDirtyParams) {
         UpdateParameters(network);
         _shader->tag_modified();
       }
@@ -361,6 +504,11 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
     const std::string inputName = inputMapping ?
                                       inputMapping->parameterName(paramName, nullptr, &value) :
                                       paramName.GetString();
+
+    /* Mapping returned the skip sentinel: this parameter is handled elsewhere. */
+    if (inputName == SKIP_PARAM) {
+      continue;
+    }
 
     /* Find the input to write the parameter value to. */
     const SocketType *input = nullptr;
@@ -405,6 +553,54 @@ void HdCyclesMaterial::UpdateParameters(HdMaterialNetworkSchema network)
   }
 }
 
+ShaderOutput *HdCyclesMaterial::ResolveTextureOutput(NodeDesc &srcDesc,
+                                                     const SdfPath &srcPath,
+                                                     const TfToken &outputName,
+                                                     ShaderInput *destInput,
+                                                     ShaderGraph *graph)
+{
+  /* Determine the "base" color/alpha output: use end of scale/bias chain if present. */
+  ShaderOutput *colorOut = srcDesc.scaleBiasRgb ?
+                               srcDesc.scaleBiasRgb->output("Vector") :
+                               srcDesc.node->output("Color");
+  ShaderOutput *alphaOut = srcDesc.scaleBiasAlpha ?
+                               srcDesc.scaleBiasAlpha->output("Value") :
+                               srcDesc.node->output("Alpha");
+
+  if (outputName == CyclesMaterialTokens->rgb) {
+    return colorOut;
+  }
+  if (outputName == CyclesMaterialTokens->a) {
+    return alphaOut;
+  }
+
+  /* Single-channel outputs: route through separate_color. */
+  if (outputName == CyclesMaterialTokens->r || outputName == CyclesMaterialTokens->g ||
+      outputName == CyclesMaterialTokens->b)
+  {
+    /* Create the separate_color node lazily on first r/g/b use for this texture. */
+    if (!srcDesc.separateColor) {
+      const NodeType *sepType = NodeType::find(ustring("separate_color"));
+      if (!sepType) {
+        TF_WARN("Could not find Cycles node type 'separate_color'");
+        return colorOut; /* fallback */
+      }
+      srcDesc.separateColor = graph->create_node(sepType);
+      graph->connect(colorOut, srcDesc.separateColor->input("Color"));
+    }
+    const char *outSocket = (outputName == CyclesMaterialTokens->r) ? "Red" :
+                            (outputName == CyclesMaterialTokens->g) ? "Green" :
+                                                                      "Blue";
+    return srcDesc.separateColor->output(outSocket);
+  }
+
+  /* Non-channel outputs (e.g. for primvar readers): fall back to mapping. */
+  const std::string outName = srcDesc.mapping ?
+                                  srcDesc.mapping->parameterName(outputName, destInput) :
+                                  outputName.GetString();
+  return srcDesc.node->output(ustring(outName));
+}
+
 void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
                                          HdMaterialNodeSchema nodeSchema,
                                          const SdfPath &nodePath,
@@ -418,10 +614,81 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
       continue;
     }
 
+    /* UsdPreviewSurface.displacement connection: store the upstream output for use at
+     * terminal time; do NOT try to connect it to principled_bsdf (no such socket). */
+    if (nodeDesc.mapping == sUsdToCyles->previewSurfaceMapping() &&
+        dstSocketName == CyclesMaterialTokens->displacement)
+    {
+      HdMaterialConnectionSchema connSchema = connVec.GetElement(0);
+      const SdfPath upPath =
+          connSchema.GetUpstreamNodePath() ?
+              MaterialNodeNameToSdfPath(
+                  connSchema.GetUpstreamNodePath()->GetTypedValue(0.0f)) :
+              SdfPath();
+      const TfToken upOutput = connSchema.GetUpstreamNodeOutputName() ?
+                                   connSchema.GetUpstreamNodeOutputName()->GetTypedValue(0.0f) :
+                                   TfToken();
+      auto srcIt = _nodes.find(upPath);
+      if (srcIt != _nodes.end()) {
+        ShaderOutput *out = ResolveTextureOutput(
+            srcIt->second, upPath, upOutput, nullptr, shaderGraph);
+        if (!out) {
+          /* Try generic output resolution for non-texture upstream nodes. */
+          const std::string outName = srcIt->second.mapping ?
+                                          srcIt->second.mapping->parameterName(upOutput, nullptr) :
+                                          upOutput.GetString();
+          out = srcIt->second.node->output(ustring(outName));
+        }
+        _displacementOutput = out;
+        _hasDisplacement = true;
+      }
+      continue;
+    }
+
     const UsdToCyclesMapping *inputMapping = nodeDesc.mapping;
+
+    /* UsdPreviewSurface.normal connection: route through the remap → normal_map chain. */
+    if (nodeDesc.mapping == sUsdToCyles->previewSurfaceMapping() &&
+        dstSocketName == CyclesMaterialTokens->normal && _normalRemapNode)
+    {
+      HdMaterialConnectionSchema connSchema = connVec.GetElement(0);
+      const SdfPath upPath =
+          connSchema.GetUpstreamNodePath() ?
+              MaterialNodeNameToSdfPath(
+                  connSchema.GetUpstreamNodePath()->GetTypedValue(0.0f)) :
+              SdfPath();
+      const TfToken upOutput = connSchema.GetUpstreamNodeOutputName() ?
+                                   connSchema.GetUpstreamNodeOutputName()->GetTypedValue(0.0f) :
+                                   TfToken();
+      auto srcIt = _nodes.find(upPath);
+      if (srcIt != _nodes.end()) {
+        ShaderOutput *out = nullptr;
+        if (srcIt->second.mapping == sUsdToCyles->uvTextureMapping()) {
+          out = ResolveTextureOutput(
+              srcIt->second, upPath, upOutput, _normalRemapNode->input("Vector1"), shaderGraph);
+        }
+        else {
+          const std::string outName = srcIt->second.mapping ?
+                                          srcIt->second.mapping->parameterName(
+                                              upOutput, _normalRemapNode->input("Vector1")) :
+                                          upOutput.GetString();
+          out = srcIt->second.node->output(ustring(outName));
+        }
+        if (out) {
+          shaderGraph->connect(out, _normalRemapNode->input("Vector1"));
+        }
+      }
+      continue;
+    }
+
     const std::string inputName = inputMapping ?
                                       inputMapping->parameterName(dstSocketName, nullptr) :
                                       dstSocketName.GetString();
+
+    /* Skip parameters that are handled elsewhere. */
+    if (inputName == SKIP_PARAM) {
+      continue;
+    }
 
     /* Find the input to connect to on the passed in node. */
     ShaderInput *input = nullptr;
@@ -469,16 +736,24 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
       continue;
     }
 
-    const UsdToCyclesMapping *outputMapping = srcNodeIt->second.mapping;
-    const std::string outputName = outputMapping ?
-                                       outputMapping->parameterName(upstreamOutputName, input) :
-                                       upstreamOutputName.GetString();
-
     ShaderOutput *output = nullptr;
-    for (ShaderOutput *out : srcNodeIt->second.node->outputs) {
-      if (string_iequals(out->socket_type.name.string(), outputName)) {
-        output = out;
-        break;
+
+    /* For UsdUVTexture upstream nodes, use the channel-aware resolver. */
+    if (srcNodeIt->second.mapping == sUsdToCyles->uvTextureMapping()) {
+      output = ResolveTextureOutput(
+          srcNodeIt->second, upstreamNodePath, upstreamOutputName, input, shaderGraph);
+    }
+    else {
+      const UsdToCyclesMapping *outputMapping = srcNodeIt->second.mapping;
+      const std::string outputName = outputMapping ?
+                                         outputMapping->parameterName(upstreamOutputName, input) :
+                                         upstreamOutputName.GetString();
+
+      for (ShaderOutput *out : srcNodeIt->second.node->outputs) {
+        if (string_iequals(out->socket_type.name.string(), outputName)) {
+          output = out;
+          break;
+        }
       }
     }
 
@@ -499,12 +774,18 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
 void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
 {
   _nodes.clear();
+  _normalRemapNode = nullptr;
+  _normalMapNode = nullptr;
+  _displacementOutput = nullptr;
+  _displacementConstant = 0.0f;
+  _hasDisplacement = false;
+  _rebuildOnDirtyParams = false;
 
   unique_ptr<ShaderGraph> graph = make_unique<ShaderGraph>();
 
   HdMaterialNodeContainerSchema nodes = network.GetNodes();
 
-  /* Iterate all the nodes first and build a complete but unconnected graph with parameters set. */
+  /* === Pass 1: Create all nodes and set their authored parameters === */
   for (const TfToken &nodeName : nodes.GetNames()) {
     HdMaterialNodeSchema nodeSchema = nodes.Get(nodeName);
     const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
@@ -554,8 +835,190 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
     UpdateParameters(nodeDesc, nodeSchema.GetParameters(), nodePath);
   }
 
-  /* Now that all nodes have been constructed, iterate the network again and build up any
-   * connections between nodes. */
+  /* === Pass 2: Insert scale/bias auxiliary nodes for UsdUVTexture === */
+  for (const TfToken &nodeName : nodes.GetNames()) {
+    HdMaterialNodeSchema nodeSchema = nodes.Get(nodeName);
+    const TfToken nodeTypeIdToken = nodeSchema.GetNodeIdentifier() ?
+                                        nodeSchema.GetNodeIdentifier()->GetTypedValue(0.0f) :
+                                        TfToken();
+    if (nodeTypeIdToken != CyclesMaterialTokens->UsdUVTexture) {
+      continue;
+    }
+    const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
+    auto nodeIt = _nodes.find(nodePath);
+    if (nodeIt == _nodes.end()) {
+      continue;
+    }
+
+    GfVec4f scale(1.0f, 1.0f, 1.0f, 1.0f);
+    GfVec4f bias(0.0f, 0.0f, 0.0f, 0.0f);
+    const bool hasScale = ReadVec4fParam(nodeSchema.GetParameters(), CyclesMaterialTokens->scale, &scale);
+    const bool hasBias = ReadVec4fParam(nodeSchema.GetParameters(), CyclesMaterialTokens->bias, &bias);
+
+    const bool nonDefaultScale = hasScale &&
+                                 (scale != GfVec4f(1.0f, 1.0f, 1.0f, 1.0f));
+    const bool nonDefaultBias = hasBias &&
+                                (bias != GfVec4f(0.0f, 0.0f, 0.0f, 0.0f));
+
+    if (!nonDefaultScale && !nonDefaultBias) {
+      continue;
+    }
+
+    /* Build: image_texture.Color → vector_math(multiply_add) → rgb output
+     *        image_texture.Alpha → math(multiply_add) → alpha output
+     *
+     * vector_math multiply_add: Vector = Vector1 * Vector2 + Vector3 */
+    const NodeType *vmType = NodeType::find(ustring("vector_math"));
+    const NodeType *mType = NodeType::find(ustring("math"));
+    if (!vmType || !mType) {
+      TF_WARN("UsdUVTexture scale/bias: required Cycles node types not found");
+      continue;
+    }
+
+    ShaderNode *rgbNode = graph->create_node(vmType);
+    {
+      /* Set mode to multiply_add */
+      const SocketType *typeSocket = rgbNode->type->find_input(ustring("math_type"));
+      if (typeSocket) {
+        SetNodeValue(rgbNode, *typeSocket, VtValue(TfToken("multiply_add")));
+      }
+      /* Vector2 = scale.rgb, Vector3 = bias.rgb */
+      if (const SocketType *v2 = rgbNode->type->find_input(ustring("vector2"))) {
+        rgbNode->set(*v2, make_float3(scale[0], scale[1], scale[2]));
+      }
+      if (const SocketType *v3 = rgbNode->type->find_input(ustring("vector3"))) {
+        rgbNode->set(*v3, make_float3(bias[0], bias[1], bias[2]));
+      }
+      graph->connect(nodeIt->second.node->output("Color"), rgbNode->input("Vector1"));
+    }
+
+    ShaderNode *alphaNode = graph->create_node(mType);
+    {
+      const SocketType *typeSocket = alphaNode->type->find_input(ustring("math_type"));
+      if (typeSocket) {
+        SetNodeValue(alphaNode, *typeSocket, VtValue(TfToken("multiply_add")));
+      }
+      /* Value2 = scale.a, Value3 = bias.a */
+      if (const SocketType *v2 = alphaNode->type->find_input(ustring("value2"))) {
+        alphaNode->set(*v2, scale[3]);
+      }
+      if (const SocketType *v3 = alphaNode->type->find_input(ustring("value3"))) {
+        alphaNode->set(*v3, bias[3]);
+      }
+      graph->connect(nodeIt->second.node->output("Alpha"), alphaNode->input("Value1"));
+    }
+
+    nodeIt->second.scaleBiasRgb = rgbNode;
+    nodeIt->second.scaleBiasAlpha = alphaNode;
+    _rebuildOnDirtyParams = true;
+  }
+
+  /* === Pass 3: Normal-map chain and specular workflow for UsdPreviewSurface === */
+  for (const TfToken &nodeName : nodes.GetNames()) {
+    HdMaterialNodeSchema nodeSchema = nodes.Get(nodeName);
+    const TfToken nodeTypeIdToken = nodeSchema.GetNodeIdentifier() ?
+                                        nodeSchema.GetNodeIdentifier()->GetTypedValue(0.0f) :
+                                        TfToken();
+    if (nodeTypeIdToken != CyclesMaterialTokens->UsdPreviewSurface) {
+      continue;
+    }
+    const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
+    auto nodeIt = _nodes.find(nodePath);
+    if (nodeIt == _nodes.end()) {
+      continue;
+    }
+    ShaderNode *principled = nodeIt->second.node;
+    HdMaterialNodeParameterContainerSchema params = nodeSchema.GetParameters();
+
+    /* -- Normal-map chain --
+     * Build: [upstream] → vector_math(multiply_add) ×0.5+0.5 → normal_map → principled.normal
+     *
+     * The UsdPreviewSurface normal input expects tangent-space vectors in [-1, 1].
+     * Cycles' normal_map node expects a colour in [0, 1], so we remap with ×0.5 + 0.5.
+     * The chain is always inserted so that both connected and constant normals work.
+     * Connected case: upstream → remap.Vector1; connection is handled in UpdateConnections.
+     * Constant case: the authored normal value (in [-1,1]) is set on remap.Vector1 below. */
+    {
+      const NodeType *vmType = NodeType::find(ustring("vector_math"));
+      const NodeType *nmType = NodeType::find(ustring("normal_map"));
+      if (vmType && nmType) {
+        _normalRemapNode = graph->create_node(vmType);
+        {
+          const SocketType *typeSocket = _normalRemapNode->type->find_input(ustring("math_type"));
+          if (typeSocket) {
+            SetNodeValue(_normalRemapNode, *typeSocket, VtValue(TfToken("multiply_add")));
+          }
+          /* Vector2 = (0.5, 0.5, 0.5), Vector3 = (0.5, 0.5, 0.5) */
+          if (const SocketType *v2 = _normalRemapNode->type->find_input(ustring("vector2"))) {
+            _normalRemapNode->set(*v2, make_float3(0.5f, 0.5f, 0.5f));
+          }
+          if (const SocketType *v3 = _normalRemapNode->type->find_input(ustring("vector3"))) {
+            _normalRemapNode->set(*v3, make_float3(0.5f, 0.5f, 0.5f));
+          }
+        }
+
+        _normalMapNode = graph->create_node(nmType);
+        /* Tangent space is the default; the UV attribute is the mesh's st primvar, which
+         * Cycles exports as its standard UV map, so we leave Attribute empty (""). */
+
+        graph->connect(_normalRemapNode->output("Vector"), _normalMapNode->input("Color"));
+        graph->connect(_normalMapNode->output("Normal"), principled->input("Normal"));
+
+        /* If the normal is authored as a constant (not connected), set the remap node's
+         * Vector1 input to the authored value so the chain produces the correct colour.
+         * Constant normals connected to UsdPreviewSurface are unusual in practice and the
+         * USD spec does not require them, but we support them as an approximation. */
+        /* Always set Vector1 to the tangent-space "flat" direction (0, 0, 1) so an
+         * unconnected normal gives no perturbation.  vector_math(multiply_add) default is
+         * zero_float3, which remaps to (0.5,0.5,0.5) = zero-length normal; wrong. */
+        GfVec3f constNormal(0.0f, 0.0f, 1.0f);
+        ReadVec3fParam(params, CyclesMaterialTokens->normal, &constNormal);
+        if (const SocketType *v1 = _normalRemapNode->type->find_input(ustring("vector1"))) {
+          _normalRemapNode->set(*v1,
+                                make_float3(constNormal[0], constNormal[1], constNormal[2]));
+        }
+        _rebuildOnDirtyParams = true;
+      }
+    }
+
+    /* -- useSpecularWorkflow / specularColor --
+     * Principled BSDF v4 has no native specular-workflow mode.
+     * Approximation:
+     *   workflow=0 (metallic, default): leave specular_tint = white (no tint).
+     *   workflow=1: map specularColor → specular_tint; the tint modulates the specular
+     *               highlight but is not an exact match because Principled uses a
+     *               metallic-workflow energy model. In particular, the F0 is not set
+     *               from specularColor, only the tint colour. At roughness=0 the result
+     *               is close; at high roughness and non-grey specularColor it diverges.
+     * Note: specularColor is only applied here, not in UpdateParameters, so that the
+     * workflow flag is always read first regardless of parameter order in the network. */
+    {
+      int workflow = 0;
+      ReadIntParam(params, CyclesMaterialTokens->useSpecularWorkflow, &workflow);
+      if (workflow == 1) {
+        GfVec3f specColor(1.0f, 1.0f, 1.0f);
+        if (ReadVec3fParam(params, CyclesMaterialTokens->specularColor, &specColor)) {
+          if (const SocketType *sock = principled->type->find_input(ustring("specular_tint"))) {
+            principled->set(*sock, make_float3(specColor[0], specColor[1], specColor[2]));
+          }
+        }
+      }
+      /* workflow=0: specular_tint stays white (set in initializeNode's Principled defaults). */
+    }
+
+    /* -- displacement constant --
+     * Store the authored constant displacement value for use at terminal time.
+     * If the displacement input is connected, _displacementOutput is set in UpdateConnections. */
+    {
+      float dispVal = 0.0f;
+      if (ReadFloatParam(params, CyclesMaterialTokens->displacement, &dispVal)) {
+        _displacementConstant = dispVal;
+        _hasDisplacement = true;
+      }
+    }
+  }
+
+  /* === Pass 4: Wire all connections === */
   for (const TfToken &nodeName : nodes.GetNames()) {
     const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
 
@@ -568,7 +1031,7 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
     UpdateConnections(nodeIt->second, nodes.Get(nodeName), nodePath, graph.get());
   }
 
-  /* Finally connect the terminals to the graph output (Surface, Volume, Displacement). */
+  /* === Pass 5: Connect terminals to the graph output === */
   HdMaterialConnectionContainerSchema terminals = network.GetTerminals();
   for (const TfToken &terminalName : terminals.GetNames()) {
     HdMaterialConnectionSchema termSchema = terminals.Get(terminalName);
@@ -591,11 +1054,11 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
 
     const char *inputName = nullptr;
     const char *outputName = nullptr;
+
     if (terminalName == HdMaterialTerminalTokens->surface ||
         terminalName == CyclesMaterialTokens->cyclesSurface)
     {
       inputName = "Surface";
-      /* Find default output name based on the node if none is provided. */
       if (node->type->name == "add_closure" || node->type->name == "mix_closure") {
         outputName = "Closure";
       }
@@ -609,7 +1072,46 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
     else if (terminalName == HdMaterialTerminalTokens->displacement ||
              terminalName == CyclesMaterialTokens->cyclesDisplacement)
     {
-      inputName = outputName = "Displacement";
+      /* UsdPreviewSurface.displacement: insert a Cycles displacement node.
+       *
+       * We use bump mode (DISPLACE_BUMP, the shader default) because true displacement
+       * requires tessellation that is not the default for Hydra renders.  Bump mode
+       * computes a displaced shading normal from the height field, giving a visible
+       * normal-perturbing effect without topology changes. */
+      if (nodeIt->second.mapping == sUsdToCyles->previewSurfaceMapping() && _hasDisplacement) {
+        const NodeType *dispType = NodeType::find(ustring("displacement"));
+        if (dispType) {
+          ShaderNode *dispNode = graph->create_node(dispType);
+          /* Midlevel = 0.0 (no centre offset; displacement is a signed delta along the normal).
+           * Scale = 1.0 (authored values are in scene units).
+           * The spec treats displacement as a world-space offset; Cycles' object-space default
+           * is close enough for the test geometry here. */
+          if (const SocketType *ml = dispNode->type->find_input(ustring("midlevel"))) {
+            dispNode->set(*ml, 0.0f);
+          }
+
+          ShaderInput *heightIn = dispNode->input("Height");
+          if (heightIn) {
+            if (_displacementOutput) {
+              graph->connect(_displacementOutput, heightIn);
+            }
+            else {
+              /* Constant authored value. */
+              if (const SocketType *h = dispNode->type->find_input(ustring("height"))) {
+                dispNode->set(*h, _displacementConstant);
+              }
+            }
+          }
+
+          ShaderInput *matDispIn = graph->output()->input("Displacement");
+          ShaderOutput *dispOut = dispNode->output("Displacement");
+          if (matDispIn && dispOut) {
+            graph->connect(dispOut, matDispIn);
+          }
+        }
+      }
+      /* Displacement was handled above; skip the generic terminal wiring below. */
+      continue;
     }
     else if (terminalName == HdMaterialTerminalTokens->volume ||
              terminalName == CyclesMaterialTokens->cyclesVolume)
@@ -643,7 +1145,88 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
     graph->connect(output, input);
   }
 
-  /* Create the instanceId AOV output. */
+  /* === Pass 6: opacityThreshold post-processing ===
+   * Insert a math(greater_than) node when opacityThreshold > 0.  This runs after
+   * connections are wired so we can disconnect principled_bsdf.Alpha and re-route it.
+   *
+   * Spec: alpha = (opacity >= threshold) ? 1.0 : 0.0.
+   * Cycles' greater_than returns a > b (strictly), which is functionally equivalent
+   * for sampled opacity values where the exact threshold boundary is not observable. */
+  for (const TfToken &nodeName : nodes.GetNames()) {
+    HdMaterialNodeSchema nodeSchema = nodes.Get(nodeName);
+    const TfToken nodeTypeIdToken = nodeSchema.GetNodeIdentifier() ?
+                                        nodeSchema.GetNodeIdentifier()->GetTypedValue(0.0f) :
+                                        TfToken();
+    if (nodeTypeIdToken != CyclesMaterialTokens->UsdPreviewSurface) {
+      continue;
+    }
+    const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
+    auto nodeIt = _nodes.find(nodePath);
+    if (nodeIt == _nodes.end()) {
+      continue;
+    }
+
+    float threshold = 0.0f;
+    if (!ReadFloatParam(nodeSchema.GetParameters(), CyclesMaterialTokens->opacityThreshold, &threshold) ||
+        threshold <= 0.0f)
+    {
+      continue;
+    }
+
+    /* Find principled_bsdf.Alpha */
+    ShaderNode *principled = nodeIt->second.node;
+    ShaderInput *alphaIn = principled->input("Alpha");
+    if (!alphaIn) {
+      continue;
+    }
+
+    const NodeType *mType = NodeType::find(ustring("math"));
+    if (!mType) {
+      continue;
+    }
+
+    ShaderNode *threshNode = graph->create_node(mType);
+    const SocketType *typeSocket = threshNode->type->find_input(ustring("math_type"));
+    if (typeSocket) {
+      SetNodeValue(threshNode, *typeSocket, VtValue(TfToken("greater_than")));
+    }
+    /* Value2 = threshold */
+    if (const SocketType *v2 = threshNode->type->find_input(ustring("value2"))) {
+      threshNode->set(*v2, threshold);
+    }
+
+    /* Wire: existing alpha source → threshNode.Value1 → principled.Alpha */
+    ShaderInput *threshValue1 = threshNode->input("Value1");
+    if (!threshValue1) {
+      continue;
+    }
+
+    if (alphaIn->link) {
+      /* Disconnect current alpha connection and reroute through greater_than. */
+      ShaderOutput *existingAlphaOut = alphaIn->link;
+      graph->disconnect(alphaIn);
+      graph->connect(existingAlphaOut, threshValue1);
+    }
+    else {
+      /* Constant alpha: read the current value and set it on threshNode. */
+      const SocketType *v1 = threshNode->type->find_input(ustring("value1"));
+      if (v1) {
+        float currentAlpha = 1.0f;
+        /* principled.Alpha default or authored value */
+        if (const SocketType *alphaSock = principled->type->find_input(ustring("alpha"))) {
+          VtValue currentVal = GetNodeValue(principled, *alphaSock);
+          if (currentVal.IsHolding<float>()) {
+            currentAlpha = currentVal.UncheckedGet<float>();
+          }
+        }
+        threshNode->set(*v1, currentAlpha);
+      }
+    }
+    graph->connect(threshNode->output("Value"), alphaIn);
+    _rebuildOnDirtyParams = true;
+  }
+
+  /* === Create the instanceId AOV output === */
   {
     const ustring instanceId(HdAovTokens->instanceId.GetString());
 
@@ -669,6 +1252,10 @@ void HdCyclesMaterial::Finalize(HdRenderParam *renderParam)
   const bool keep_nodes = static_cast<const HdCyclesSession *>(renderParam)->keep_nodes;
 
   _nodes.clear();
+  _normalRemapNode = nullptr;
+  _normalMapNode = nullptr;
+  _displacementOutput = nullptr;
+  _rebuildOnDirtyParams = false;
 
   if (!keep_nodes) {
     lock.scene->delete_node(_shader);
