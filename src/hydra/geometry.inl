@@ -229,6 +229,10 @@ void HdCyclesGeometry<Base, CyclesBase>::InitializeInstance(int index)
 {
   Object *instance = _instances[index];
   instance->set_geometry(_geom);
+  /* Cryptomatte's object and asset IDs and manifests come from these names. Every instance of
+   * a prim is that prim; its asset is the prim's parent. */
+  instance->name = _geom->name;
+  instance->set_asset_name(ustring(Base::GetId().GetParentPath().GetString()));
 
   instance->attributes.emplace_back(HdAovTokens->instanceId.GetString(),
                                     _instances.size() == 1 ? -1.0f : static_cast<float>(index));

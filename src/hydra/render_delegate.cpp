@@ -22,6 +22,7 @@
 #include "scene/film.h"
 #include "scene/integrator.h"
 #include "scene/light.h"
+#include "scene/object.h"
 #include "scene/scene.h"
 #include "scene/shader.h"
 #include "session/session.h"
@@ -712,16 +713,41 @@ VtDictionary HdCyclesDelegate::GetRenderStats() const
   }
 
   // husk reads huskErrorStatus and exits non-zero when it is set.
-  return {{"rendererName", VtValue("Cycles")},
-          {"rendererVersion", VtValue(GfVec3i(0, 0, 0))},
-          {"percentDone", VtValue(floor_to_int(fractionDone * 100))},
-          {"fractionDone", VtValue(fractionDone)},
-          {"loadClockTime", VtValue(totalTime - renderTime)},
-          {"peakMemory", VtValue(stats.mem_peak)},
-          {"totalClockTime", VtValue(totalTime)},
-          {"totalMemory", VtValue(stats.mem_used)},
-          {"renderProgressAnnotation", VtValue(status)},
-          {"huskErrorStatus", VtValue(progress.get_error() ? 1 : 0)}};
+  VtDictionary renderStats = {{"rendererName", VtValue("Cycles")},
+                              {"rendererVersion", VtValue(GfVec3i(0, 0, 0))},
+                              {"percentDone", VtValue(floor_to_int(fractionDone * 100))},
+                              {"fractionDone", VtValue(fractionDone)},
+                              {"loadClockTime", VtValue(totalTime - renderTime)},
+                              {"peakMemory", VtValue(stats.mem_peak)},
+                              {"totalClockTime", VtValue(totalTime)},
+                              {"totalMemory", VtValue(stats.mem_used)},
+                              {"renderProgressAnnotation", VtValue(status)},
+                              {"huskErrorStatus", VtValue(progress.get_error() ? 1 : 0)}};
+
+  // Cryptomatte metadata for each type being rendered, which UsdRenderers.json's
+  // husk.metadata writes into the image as the cryptomatte specification names it. Types not
+  // rendered publish nothing, so husk leaves their metadata out.
+  Scene *const scene = _renderParam->session->scene.get();
+  const thread_scoped_lock lock(scene->mutex);
+  const CryptomatteType cryptomatte = scene->film->get_cryptomatte_passes();
+  const auto publish = [&renderStats](const char *type, const char *layer, string manifest) {
+    const std::string prefix = std::string("cryptomatte_") + type + "_";
+    renderStats[prefix + "name"] = VtValue(std::string(layer));
+    renderStats[prefix + "hash"] = VtValue(std::string("MurmurHash3_32"));
+    renderStats[prefix + "conversion"] = VtValue(std::string("uint32_to_float32"));
+    renderStats[prefix + "manifest"] = VtValue(std::move(manifest));
+  };
+  if (cryptomatte & CRYPT_OBJECT) {
+    publish("object", "CryptoObject", scene->object_manager->get_cryptomatte_objects(scene));
+  }
+  if (cryptomatte & CRYPT_MATERIAL) {
+    publish(
+        "material", "CryptoMaterial", scene->shader_manager->get_cryptomatte_materials(scene));
+  }
+  if (cryptomatte & CRYPT_ASSET) {
+    publish("asset", "CryptoAsset", scene->object_manager->get_cryptomatte_assets(scene));
+  }
+  return renderStats;
 }
 
 HdAovDescriptor HdCyclesDelegate::GetDefaultAovDescriptor(const TfToken &name) const

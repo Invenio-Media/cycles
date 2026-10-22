@@ -1275,6 +1275,8 @@ void HdCyclesMaterial::Initialize(HdRenderParam *renderParam)
   const SceneLock lock(renderParam);
 
   _shader = lock.scene->create_node<Shader>();
+  /* Cryptomatte's material IDs and manifest come from the shader name. */
+  _shader->name = GetId().GetString();
 }
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

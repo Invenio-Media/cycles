@@ -5,6 +5,7 @@
 
 #include "hydra/session.h"
 #include "hydra/diagnostic.h"
+#include "scene/film.h"
 #include "scene/object.h"
 #include "scene/shader.h"
 // Have to include shader.h before background.h so that 'set_shader' uses the correct 'set'
@@ -64,6 +65,36 @@ const std::unordered_map<TfToken, PassType, TfToken::HashFunctor> kAovToPass = {
     // Written by the AOV output node of the default surface shader (see the constructor).
     {HdAovTokens->instanceId, PASS_AOV_VALUE},
 };
+
+/* One RenderVar per cryptomatte layer, named like Cycles' passes and Blender's EXR layers:
+ * CryptoObject00, CryptoMaterial01, CryptoAsset02. Each layer holds two ID/coverage pairs. */
+struct CryptomatteLayer {
+  CryptomatteType type;
+  int index;
+};
+
+constexpr std::pair<const char *, CryptomatteType> kCryptomatteTypes[] = {
+    {"CryptoObject", CRYPT_OBJECT},
+    {"CryptoMaterial", CRYPT_MATERIAL},
+    {"CryptoAsset", CRYPT_ASSET},
+};
+
+bool ParseCryptomatteLayer(const TfToken &sourceName, CryptomatteLayer *layer)
+{
+  const auto digit = [](const char c) { return c >= '0' && c <= '9'; };
+  const std::string &name = sourceName.GetString();
+  for (const auto &[prefix, type] : kCryptomatteTypes) {
+    const size_t length = strlen(prefix);
+    if (name.size() == length + 2 && name.starts_with(prefix) && digit(name[length]) &&
+        digit(name[length + 1]))
+    {
+      layer->type = type;
+      layer->index = (name[length] - '0') * 10 + (name[length + 1] - '0');
+      return true;
+    }
+  }
+  return false;
+}
 
 TfToken GetSourceName(const HdRenderPassAovBinding &aovBinding)
 {
@@ -217,9 +248,40 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
   const thread_scoped_lock lock(_aovMutex);
   _aovBindings = aovBindings;
   _aovPasses.assign(aovBindings.size(), HdCyclesAovPass());
+
+  // Cryptomatte: the film records the requested types to the deepest requested layer, in
+  // passes the kernel expects in this order (object, material, asset) and with Blender's
+  // names, which the bindings read by name.
+  int cryptomatteTypes = CRYPT_NONE;
+  int cryptomatteDepth = 0;
+  for (const HdRenderPassAovBinding &aovBinding : aovBindings) {
+    CryptomatteLayer layer;
+    if (ParseCryptomatteLayer(GetSourceName(aovBinding), &layer)) {
+      cryptomatteTypes |= layer.type;
+      cryptomatteDepth = max(cryptomatteDepth, layer.index + 1);
+    }
+  }
+  scene->film->set_cryptomatte_passes(CryptomatteType(cryptomatteTypes));
+  scene->film->set_cryptomatte_depth(cryptomatteDepth);
+  for (const auto &[prefix, type] : kCryptomatteTypes) {
+    for (int index = 0; (cryptomatteTypes & type) && index < cryptomatteDepth; ++index) {
+      Pass *pass = scene->create_node<Pass>();
+      pass->set_type(PASS_CRYPTOMATTE);
+      pass->set_mode(PassMode::NOISY);
+      pass->set_name(ustring(string_printf("%s%02d", prefix, index)));
+    }
+  }
+
   std::unordered_set<std::string> createdPasses;
   for (size_t i = 0; i < aovBindings.size(); ++i) {
     const TfToken sourceName = GetSourceName(aovBindings[i]);
+    HdCyclesAovPass &aovPass = _aovPasses[i];
+    CryptomatteLayer layer;
+    if (ParseCryptomatteLayer(sourceName, &layer)) {
+      aovPass.passName = sourceName.GetString();
+      continue;
+    }
+
     const PassType type = HdCyclesPassTypeForAov(sourceName);
     if (type == PASS_NONE) {
       // elementId is a standard Hydra AOV that Cycles has no pass for.
@@ -229,7 +291,6 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
       continue;
     }
 
-    HdCyclesAovPass &aovPass = _aovPasses[i];
     aovPass.isId = sourceName == HdAovTokens->primId || sourceName == HdAovTokens->instanceId;
     if (type == PASS_POSITION || type == PASS_DEPTH) {
       aovPass.scale = float(1.0 / _stageMetersPerUnit);
