@@ -111,12 +111,15 @@ void HdCyclesLight::Sync(HdSceneDelegate *sceneDelegate,
       return sceneDelegate->GetLightParamValue(id, TfToken(std::string("cycles:light:") + name));
     };
     HdCyclesApplyObjectSettings(_object, visibility, read);
+    /* Unauthored, the light keeps Cycles' socket defaults, apart from use_mis, which the
+     * delegate has always turned on. */
     _light->set_cast_shadow(HdCyclesSettingValue<bool>(
         read("cast_shadow"), GetTypedValue<bool>(lightDs, HdLightTokens->shadowEnable, true)));
     _light->set_use_mis(HdCyclesSettingValue<bool>(read("use_mis"), true));
     _light->set_use_caustics(HdCyclesSettingValue<bool>(read("use_caustics"), false));
     _light->set_max_bounces(HdCyclesSettingValue<int>(read("max_bounces"), 1024));
-    /* A dome lights the scene through the background, whose light group is its own. */
+    /* A dome lights the scene through the background, whose light group is its own. Cycles has
+     * one background, so with several domes the last one synced sets it. */
     if (_lightType == HdPrimTypeTokens->domeLight) {
       lock.scene->background->set_lightgroup(_object->get_lightgroup());
     }

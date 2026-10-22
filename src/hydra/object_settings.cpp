@@ -26,6 +26,7 @@ const RayVisibility kRayVisibility[] = {
     {"visibility:shadow", PATH_RAY_VISIBILITY_SHADOW},
 };
 
+/* A string or token value; VtValue does not cast a token to a string. */
 std::string ReadString(const VtValue &value)
 {
   if (value.IsHolding<TfToken>()) {
