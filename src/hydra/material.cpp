@@ -1136,6 +1136,9 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
   }
 
   _shader->set_graph(std::move(graph));
+  /* set_graph() does not mark the shader modified, and Sync only sends modified shaders to
+   * the scene, so a rebuilt graph would otherwise not be compiled. */
+  _shader->tag_modified();
 }
 
 void HdCyclesMaterial::Finalize(HdRenderParam *renderParam)
