@@ -73,6 +73,8 @@ TF_DEFINE_PRIVATE_TOKENS(CyclesMaterialTokens,
     (specularColor)
     (opacity)
     (metallic)
+    (file)
+    ((autoColorSpace, "auto"))
 );
 // clang-format on
 
@@ -151,6 +153,15 @@ class UsdToCyclesTexture : public UsdToCyclesMapping {
  public:
   using UsdToCyclesMapping::UsdToCyclesMapping;
 
+  /* UsdPreviewSurface's default sourceColorSpace is "auto", where Cycles' image texture node
+   * starts out scene linear. */
+  void initializeNode(ShaderNode *node) const override
+  {
+    if (const SocketType *input = node->type->find_input(ustring("colorspace"))) {
+      node->set_default_value(*input);
+    }
+  }
+
   std::string parameterName(const TfToken &name,
                             const ShaderInput *inputConnection,
                             VtValue *value) const override
@@ -175,7 +186,9 @@ class UsdToCyclesTexture : public UsdToCyclesMapping {
 
       /* UsdUVTexture's sourceColorSpace values are not OCIO colorspace names, and the host's
        * config need not define "sRGB" or "raw", in which case Cycles would read the texture as
-       * linear. Map them to the config's sRGB texture colorspace and to non-color data. */
+       * linear. Map them to the config's sRGB texture colorspace and to non-color data. A
+       * colorspace authored with UsdColorSpaceAPI, which USD 26 reports in the same place, is
+       * used as is when the config defines it. */
       if (name == CyclesMaterialTokens->sourceColorSpace) {
         const TfToken valueToken = value->IsHolding<std::string>() ?
                                        TfToken(value->UncheckedGet<std::string>()) :
@@ -194,8 +207,15 @@ class UsdToCyclesTexture : public UsdToCyclesMapping {
             return "colorspace";
           }
         }
-        /* "auto", or no sRGB colorspace in the config: reset to Cycles' automatic detection
-         * from the file and the config's file rules. */
+        else if (!valueToken.IsEmpty() && valueToken != CyclesMaterialTokens->autoColorSpace) {
+          const ustring named = ColorSpaceManager::find_colorspace({valueToken.GetText()});
+          if (!named.empty()) {
+            *value = VtValue(TfToken(named.string()));
+            return "colorspace";
+          }
+        }
+        /* "auto", or a colorspace the config lacks: reset to Cycles' automatic detection from
+         * the file and the config's file rules. */
         *value = VtValue();
         return "colorspace";
       }
@@ -520,6 +540,26 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
     }
     else {
       SetNodeValue(nodeDesc.node, *input, value);
+    }
+  }
+
+  /* USD 26 hands a UsdUVTexture's sourceColorSpace over as the colour space of its file
+   * parameter, or reports one authored with UsdColorSpaceAPI there, instead of passing the
+   * sourceColorSpace parameter. Read it the same way. */
+  if (nodeDesc.mapping == sUsdToCyles->uvTextureMapping()) {
+    const HdMaterialNodeParameterSchema file = params.Get(CyclesMaterialTokens->file);
+    const HdTokenDataSourceHandle colorSpaceDs = file ? file.GetColorSpace() : nullptr;
+    const TfToken colorSpace = colorSpaceDs ? colorSpaceDs->GetTypedValue(0.0f) : TfToken();
+    const SocketType *input = nodeDesc.node->type->find_input(ustring("colorspace"));
+    if (!colorSpace.IsEmpty() && input) {
+      VtValue value(colorSpace);
+      nodeDesc.mapping->parameterName(CyclesMaterialTokens->sourceColorSpace, nullptr, &value);
+      if (value.IsEmpty()) {
+        nodeDesc.node->set_default_value(*input);
+      }
+      else {
+        SetNodeValue(nodeDesc.node, *input, value);
+      }
     }
   }
 }
