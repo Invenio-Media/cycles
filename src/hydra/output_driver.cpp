@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/output_driver.h"
+#include "hydra/diagnostic.h"
 #include "hydra/render_buffer.h"
 #include "hydra/session.h"
 
@@ -83,7 +84,7 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
           renderBuffer->Unmap();
         }
         else {
-          TF_RUNTIME_ERROR("Could not find pass for AOV '%s'", aovBinding.aovName.GetText());
+          HDCYCLES_ERROR("Could not find pass for AOV '%s'", aovBinding.aovName.GetText());
         }
       }
     }

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/node_util.h"
-#include "util/log.h"
+#include "hydra/diagnostic.h"
 #include "util/transform.h"
 
 #include <pxr/base/gf/matrix3d.h>
@@ -32,7 +32,7 @@ template<typename DstType> DstType convertToCycles(const VtValue &value)
     return castedValue.UncheckedGet<DstType>();
   }
 
-  TF_WARN("Could not convert VtValue to Cycles type");
+  HDCYCLES_WARN("Could not convert VtValue to Cycles type");
   return DstType(0);
 }
 
@@ -62,7 +62,7 @@ template<> float3 convertToCycles<float3>(const VtValue &value)
     return make_float3(convertedValue[0], convertedValue[1], convertedValue[2]);
   }
 
-  TF_WARN("Could not convert VtValue to float3");
+  HDCYCLES_WARN("Could not convert VtValue to float3");
   return zero_float3();
 }
 
@@ -86,8 +86,7 @@ template<> ustring convertToCycles<ustring>(const VtValue &value)
     if (!TfIsRelativePath(path.GetAssetPath())) {
       return ustring(path.GetAssetPath());
     }
-    /* Cycles' log, which husk shows; it does not show Tf warnings. */
-    LOG_WARNING << "Asset " << path.GetAssetPath() << " does not resolve";
+    HDCYCLES_WARN("Asset %s does not resolve", path.GetAssetPath().c_str());
     return ustring();
   }
 
@@ -101,7 +100,7 @@ template<> ustring convertToCycles<ustring>(const VtValue &value)
     return convertToCycles<ustring>(VtValue::Cast<SdfAssetPath>(value));
   }
 
-  TF_WARN("Could not convert VtValue to ustring");
+  HDCYCLES_WARN("Could not convert VtValue to ustring");
   return ustring();
 }
 
@@ -171,7 +170,7 @@ template<> Transform convertToCycles<Transform>(const VtValue &value)
     return convertToCycles<Transform>(VtValue::Cast<GfMatrix3d>(value));
   }
 
-  TF_WARN("Could not convert VtValue to Transform");
+  HDCYCLES_WARN("Could not convert VtValue to Transform");
   return transform_identity();
 }
 
@@ -276,7 +275,7 @@ template<> array<ustring> convertToCyclesArray<ustring, void>(const VtValue &val
     return convertToCyclesArray<ustring, void>(VtValue::Cast<SdfPathArray>(value));
   }
 
-  TF_WARN("Could not convert VtValue to array<ustring>");
+  HDCYCLES_WARN("Could not convert VtValue to array<ustring>");
   return array<ustring>();
 }
 
@@ -322,7 +321,7 @@ template<> array<Transform> convertToCyclesArray<Transform, void>(const VtValue 
     return convertToCyclesTransformArray<VtMatrix3dArray>(VtValue::Cast<VtMatrix3dArray>(value));
   }
 
-  TF_WARN("Could not convert VtValue to array<Transform>");
+  HDCYCLES_WARN("Could not convert VtValue to array<Transform>");
   return array<Transform>();
 }
 
@@ -433,7 +432,7 @@ void SetNodeValue(Node *node, const SocketType &socket, const VtValue &value)
   switch (socket.type) {
     default:
     case SocketType::UNDEFINED:
-      TF_RUNTIME_ERROR("Unexpected conversion: SocketType::UNDEFINED");
+      HDCYCLES_ERROR("Unexpected conversion: SocketType::UNDEFINED");
       break;
 
     case SocketType::BOOLEAN:
@@ -477,7 +476,7 @@ void SetNodeValue(Node *node, const SocketType &socket, const VtValue &value)
       break;
     case SocketType::NODE:
       // TODO: renderIndex->GetRprim()->cycles_node ?
-      TF_WARN("Unimplemented conversion: SocketType::NODE");
+      HDCYCLES_WARN("Unimplemented conversion: SocketType::NODE");
       break;
 
     case SocketType::BOOLEAN_ARRAY: {
@@ -520,7 +519,7 @@ void SetNodeValue(Node *node, const SocketType &socket, const VtValue &value)
     }
     case SocketType::NODE_ARRAY: {
       // TODO: renderIndex->GetRprim()->cycles_node ?
-      TF_WARN("Unimplemented conversion: SocketType::NODE_ARRAY");
+      HDCYCLES_WARN("Unimplemented conversion: SocketType::NODE_ARRAY");
       break;
     }
   }
@@ -531,7 +530,7 @@ VtValue GetNodeValue(const Node *node, const SocketType &socket)
   switch (socket.type) {
     default:
     case SocketType::UNDEFINED:
-      TF_RUNTIME_ERROR("Unexpected conversion: SocketType::UNDEFINED");
+      HDCYCLES_ERROR("Unexpected conversion: SocketType::UNDEFINED");
       return VtValue();
 
     case SocketType::BOOLEAN:
@@ -558,7 +557,7 @@ VtValue GetNodeValue(const Node *node, const SocketType &socket)
     case SocketType::TRANSFORM:
       return convertFromCycles(node->get_transform(socket));
     case SocketType::NODE:
-      TF_WARN("Unimplemented conversion: SocketType::NODE");
+      HDCYCLES_WARN("Unimplemented conversion: SocketType::NODE");
       return VtValue();
 
     case SocketType::BOOLEAN_ARRAY:
@@ -579,7 +578,7 @@ VtValue GetNodeValue(const Node *node, const SocketType &socket)
     case SocketType::TRANSFORM_ARRAY:
       return convertFromCyclesArray<Transform, void>(node->get_transform_array(socket));
     case SocketType::NODE_ARRAY: {
-      TF_WARN("Unimplemented conversion: SocketType::NODE_ARRAY");
+      HDCYCLES_WARN("Unimplemented conversion: SocketType::NODE_ARRAY");
       return VtValue();
     }
   }

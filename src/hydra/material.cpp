@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/material.h"
+#include "hydra/diagnostic.h"
 #include "hydra/node_util.h"
 #include "hydra/session.h"
 #include "hydra/util.h"
@@ -219,7 +220,7 @@ class UsdToCyclesTexture : public UsdToCyclesMapping {
             *value = VtValue(TfToken(named.string()));
             return "colorspace";
           }
-          TF_WARN("UsdUVTexture colour space '%s' is not in the OCIO config; detecting it "
+          HDCYCLES_WARN("UsdUVTexture colour space '%s' is not in the OCIO config; detecting it "
                   "from the file instead",
                   valueToken.GetText());
         }
@@ -248,7 +249,7 @@ class UsdToCyclesPreviewSurface : public UsdToCyclesMapping {
     const auto findInput = [node](const char *name) -> const SocketType * {
       const SocketType *input = node->type->find_input(ustring(name));
       if (!input) {
-        TF_WARN("UsdPreviewSurface: Cycles node '%s' has no input '%s'",
+        HDCYCLES_WARN("UsdPreviewSurface: Cycles node '%s' has no input '%s'",
                 node->type->name.c_str(),
                 name);
       }
@@ -537,7 +538,7 @@ void HdCyclesMaterial::Sync(HdSceneDelegate *sceneDelegate,
       }
     }
     else {
-      TF_RUNTIME_ERROR("Could not get a material network for %s.", id.GetText());
+      HDCYCLES_ERROR("Could not get a material network for %s.", id.GetText());
     }
   }
 
@@ -580,7 +581,7 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
     }
 
     if (!input) {
-      TF_WARN("Could not find parameter '%s' on node '%s' ('%s')",
+      HDCYCLES_WARN("Could not find parameter '%s' on node '%s' ('%s')",
               paramName.GetText(),
               nodePath.GetText(),
               nodeDesc.node->name.c_str());
@@ -634,7 +635,7 @@ void HdCyclesMaterial::UpdateParameters(HdMaterialNetworkSchema network)
 
     const auto nodeIt = _nodes.find(nodePath);
     if (nodeIt == _nodes.end()) {
-      TF_RUNTIME_ERROR("Could not update parameters on missing node '%s'", nodePath.GetText());
+      HDCYCLES_ERROR("Could not update parameters on missing node '%s'", nodePath.GetText());
       continue;
     }
 
@@ -769,7 +770,7 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
     }
 
     if (!input) {
-      TF_WARN("Ignoring connection on '%s.%s', input '%s' was not found",
+      HDCYCLES_WARN("Ignoring connection on '%s.%s', input '%s' was not found",
               nodePath.GetText(),
               dstSocketName.GetText(),
               dstSocketName.GetText());
@@ -780,7 +781,7 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
      * inputs etc). Cycles inputs are single-connection, and the right lowering
      * depends on the node type, so just take the first and warn. */
     if (count > 1) {
-      TF_WARN(
+      HDCYCLES_WARN(
           "Ignoring multiple connections to '%s.%s'", nodePath.GetText(), dstSocketName.GetText());
     }
 
@@ -796,7 +797,7 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
 
     const auto srcNodeIt = _nodes.find(upstreamNodePath);
     if (srcNodeIt == _nodes.end()) {
-      TF_WARN("Ignoring connection from '%s.%s' to '%s.%s', node '%s' was not found",
+      HDCYCLES_WARN("Ignoring connection from '%s.%s' to '%s.%s', node '%s' was not found",
               upstreamNodePath.GetText(),
               upstreamOutputName.GetText(),
               nodePath.GetText(),
@@ -808,7 +809,7 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
     ShaderOutput *output = ResolveOutput(srcNodeIt->second, upstreamOutputName, input, shaderGraph);
 
     if (!output) {
-      TF_WARN("Ignoring connection from '%s.%s' to '%s.%s', output '%s' was not found",
+      HDCYCLES_WARN("Ignoring connection from '%s.%s' to '%s.%s', output '%s' was not found",
               upstreamNodePath.GetText(),
               upstreamOutputName.GetText(),
               nodePath.GetText(),
@@ -872,7 +873,7 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
         _nodes.emplace(nodePath, nodeDesc);
       }
       else {
-        TF_RUNTIME_ERROR("Could not create node '%s'", nodePath.GetText());
+        HDCYCLES_ERROR("Could not create node '%s'", nodePath.GetText());
         continue;
       }
     }
@@ -916,7 +917,7 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
     const NodeType *vmType = NodeType::find(ustring("vector_math"));
     const NodeType *mType = NodeType::find(ustring("math"));
     if (!vmType || !mType) {
-      TF_WARN("UsdUVTexture scale/bias: required Cycles node types not found");
+      HDCYCLES_WARN("UsdUVTexture scale/bias: required Cycles node types not found");
       continue;
     }
 
@@ -1051,7 +1052,7 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
 
     const auto nodeIt = _nodes.find(nodePath);
     if (nodeIt == _nodes.end()) {
-      TF_RUNTIME_ERROR("Could not find node '%s' to connect", nodePath.GetText());
+      HDCYCLES_ERROR("Could not find node '%s' to connect", nodePath.GetText());
       continue;
     }
 
@@ -1073,7 +1074,7 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
 
     const auto nodeIt = _nodes.find(upstreamNodePath);
     if (nodeIt == _nodes.end()) {
-      TF_RUNTIME_ERROR("Could not find terminal node '%s'", upstreamNodePath.GetText());
+      HDCYCLES_ERROR("Could not find terminal node '%s'", upstreamNodePath.GetText());
       continue;
     }
 
@@ -1135,7 +1136,7 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
 
     ShaderInput *const input = inputName ? graph->output()->input(inputName) : nullptr;
     if (!input) {
-      TF_RUNTIME_ERROR("Could not find terminal input '%s.%s'",
+      HDCYCLES_ERROR("Could not find terminal input '%s.%s'",
                        upstreamNodePath.GetText(),
                        inputName ? inputName : "<null>");
       continue;
@@ -1143,7 +1144,7 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
 
     ShaderOutput *const output = outputName ? node->output(outputName) : nullptr;
     if (!output) {
-      TF_RUNTIME_ERROR("Could not find terminal output '%s.%s'",
+      HDCYCLES_ERROR("Could not find terminal output '%s.%s'",
                        upstreamNodePath.GetText(),
                        outputName ? outputName : "<null>");
       continue;

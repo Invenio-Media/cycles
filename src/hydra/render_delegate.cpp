@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/render_delegate.h"
+#include "hydra/diagnostic.h"
 #include "hydra/camera.h"
 #include "hydra/curves.h"
 #include "hydra/field.h"
@@ -281,7 +282,7 @@ std::pair<SessionParams, std::string> HdCyclesDelegate::BuildSessionParams() con
     const DeviceType type = Device::type_from_string(deviceType.c_str());
     vector<DeviceInfo> devs = Device::available_devices(DEVICE_MASK(type));
     if (devs.empty()) {
-      TF_WARN(
+      HDCYCLES_WARN(
           "Cycles: device type '%s' has no available devices; falling back to CPU",
           deviceType.c_str());
       devs = Device::available_devices(DEVICE_MASK_CPU);
@@ -413,7 +414,7 @@ void HdCyclesDelegate::ApplyRenderingColorSpace(std::string colorSpace)
 {
   _requestedColorSpace = colorSpace;
   if (!CCL_NS::ColorSpaceManager::set_scene_linear_colorspace(colorSpace)) {
-    TF_WARN("Rendering color space '%s' is not in the OCIO config, using its scene_linear role",
+    HDCYCLES_WARN("Rendering color space '%s' is not in the OCIO config, using its scene_linear role",
             colorSpace.c_str());
     colorSpace.clear();
     CCL_NS::ColorSpaceManager::set_scene_linear_colorspace(colorSpace);
@@ -422,7 +423,7 @@ void HdCyclesDelegate::ApplyRenderingColorSpace(std::string colorSpace)
 
   const std::lock_guard<std::mutex> lock(g_colorSpaceMutex);
   if (g_liveDelegates > 1 && g_activeColorSpace != _renderingColorSpace) {
-    TF_WARN(
+    HDCYCLES_WARN(
         "Cycles renderers with different rendering color spaces are open ('%s' and '%s'); "
         "all of them now render in '%s'",
         g_activeColorSpace.c_str(),
@@ -809,7 +810,7 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     else {
       // Emit a warning once per key, then ignore.
       if (_warnedRestartOnly.insert(key).second) {
-        TF_WARN(
+        HDCYCLES_WARN(
             "Cycles: setting '%s' requires a renderer restart to take effect; "
             "ignoring until the renderer is restarted (restartrendersettings).",
             key.GetText());

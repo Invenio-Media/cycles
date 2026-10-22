@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/session.h"
+#include "hydra/diagnostic.h"
 #include "scene/object.h"
 #include "scene/shader.h"
 // Have to include shader.h before background.h so that 'set_shader' uses the correct 'set'
@@ -223,7 +224,7 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
     if (type == PASS_NONE) {
       // elementId is a standard Hydra AOV that Cycles has no pass for.
       if (sourceName != HdAovTokens->elementId) {
-        TF_WARN("Unknown pass %s", sourceName.GetText());
+        HDCYCLES_WARN("Unknown pass %s", sourceName.GetText());
       }
       continue;
     }

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/mesh.h"
+#include "hydra/diagnostic.h"
 #include "hydra/geometry.inl"
 #include "hydra/util.h"
 #include "scene/mesh.h"
@@ -52,7 +53,7 @@ VtValue ComputeTriangulatedUniformPrimvar(VtValue value,
     case HdTypeFloatVec4:
       return ComputeTriangulatedUniformPrimvar<VtVec4fArray>(value, primitiveParams);
     default:
-      TF_RUNTIME_ERROR("Unsupported attribute type %d", static_cast<int>(valueType));
+      HDCYCLES_ERROR("Unsupported attribute type %d", static_cast<int>(valueType));
       return VtValue();
   }
 }
@@ -165,7 +166,7 @@ void HdCyclesMesh::PopulatePoints(HdSceneDelegate *sceneDelegate)
   const VtValue value = ReadPrimvar(primvars, HdTokens->points);
 
   if (!value.IsHolding<VtVec3fArray>()) {
-    TF_WARN("Invalid points data for %s", GetId().GetText());
+    HDCYCLES_WARN("Invalid points data for %s", GetId().GetText());
     return;
   }
 
@@ -212,7 +213,7 @@ void HdCyclesMesh::PopulateNormals(HdSceneDelegate *sceneDelegate)
   const VtValue value = ReadPrimvar(primvars, HdTokens->normals);
 
   if (!value.IsHolding<VtVec3fArray>()) {
-    TF_WARN("Invalid normals data for %s", GetId().GetText());
+    HDCYCLES_WARN("Invalid normals data for %s", GetId().GetText());
     return;
   }
 

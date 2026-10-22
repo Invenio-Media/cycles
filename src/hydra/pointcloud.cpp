@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/pointcloud.h"
+#include "hydra/diagnostic.h"
 #include "hydra/geometry.inl"
 #include "hydra/util.h"
 #include "scene/pointcloud.h"
@@ -63,7 +64,7 @@ void HdCyclesPoints::PopulatePoints(HdSceneDelegate *sceneDelegate)
   const VtValue value = ReadPrimvar(primvars, HdTokens->points);
 
   if (!value.IsHolding<VtVec3fArray>()) {
-    TF_WARN("Invalid points data for %s", GetId().GetText());
+    HDCYCLES_WARN("Invalid points data for %s", GetId().GetText());
     return;
   }
 
@@ -85,7 +86,7 @@ void HdCyclesPoints::PopulateWidths(HdSceneDelegate *sceneDelegate)
   const HdInterpolation interpolation = ReadPrimvarInterpolation(primvars, HdTokens->widths);
 
   if (!value.IsHolding<VtFloatArray>()) {
-    TF_WARN("Invalid widths data for %s", GetId().GetText());
+    HDCYCLES_WARN("Invalid widths data for %s", GetId().GetText());
     return;
   }
 

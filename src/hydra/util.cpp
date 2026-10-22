@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/util.h"
+#include "hydra/diagnostic.h"
 #include "scene/attribute.h"
 
 #include <pxr/base/gf/vec2f.h>
@@ -150,7 +151,7 @@ void ApplyPrimvars(AttributeSet &attributes,
       static_assert(sizeof(GfVec4f) == sizeof(float4));
       break;
     default:
-      TF_WARN("Unsupported attribute type %d", static_cast<int>(valueType));
+      HDCYCLES_WARN("Unsupported attribute type %d", static_cast<int>(valueType));
       return;
   }
 

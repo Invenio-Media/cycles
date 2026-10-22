@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/render_buffer.h"
+#include "hydra/diagnostic.h"
 #include "hydra/session.h"
 #include "util/half.h"
 
@@ -30,7 +31,7 @@ bool HdCyclesRenderBuffer::Allocate(const GfVec3i &dimensions,
                                     bool /*multiSampled*/)
 {
   if (dimensions[2] != 1) {
-    TF_RUNTIME_ERROR("HdCyclesRenderBuffer::Allocate called with dimensions that are not 2D.");
+    HDCYCLES_ERROR("HdCyclesRenderBuffer::Allocate called with dimensions that are not 2D.");
     return false;
   }
 
@@ -41,7 +42,7 @@ bool HdCyclesRenderBuffer::Allocate(const GfVec3i &dimensions,
   }
 
   if (IsMapped()) {
-    TF_RUNTIME_ERROR("HdCyclesRenderBuffer::Allocate called while buffer is mapped.");
+    HDCYCLES_ERROR("HdCyclesRenderBuffer::Allocate called while buffer is mapped.");
     return false;
   }
 
@@ -277,7 +278,7 @@ void HdCyclesRenderBuffer::WritePixels(const float *srcPixels,
       break;
 
     default:
-      TF_RUNTIME_ERROR("HdCyclesRenderBuffer::WritePixels called with unsupported format.");
+      HDCYCLES_ERROR("HdCyclesRenderBuffer::WritePixels called with unsupported format.");
       break;
   }
 }

@@ -25,6 +25,7 @@ set(SRC_HD_CYCLES_HEADERS
   camera.h
   config.h
   curves.h
+  diagnostic.h
   field.h
   file_reader.h
   geometry.h
