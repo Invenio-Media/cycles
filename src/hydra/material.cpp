@@ -213,6 +213,9 @@ class UsdToCyclesTexture : public UsdToCyclesMapping {
             *value = VtValue(TfToken(named.string()));
             return "colorspace";
           }
+          TF_WARN("UsdUVTexture colour space '%s' is not in the OCIO config; detecting it "
+                  "from the file instead",
+                  valueToken.GetText());
         }
         /* "auto", or a colorspace the config lacks: reset to Cycles' automatic detection from
          * the file and the config's file rules. */
@@ -545,7 +548,8 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
 
   /* USD 26 hands a UsdUVTexture's sourceColorSpace over as the colour space of its file
    * parameter, or reports one authored with UsdColorSpaceAPI there, instead of passing the
-   * sourceColorSpace parameter. Read it the same way. */
+   * sourceColorSpace parameter. Read it the same way; if a network supplies both, the file's
+   * colour space wins, as it is the one USD resolved. */
   if (nodeDesc.mapping == sUsdToCyles->uvTextureMapping()) {
     const HdMaterialNodeParameterSchema file = params.Get(CyclesMaterialTokens->file);
     const HdTokenDataSourceHandle colorSpaceDs = file ? file.GetColorSpace() : nullptr;
