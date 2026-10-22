@@ -5,6 +5,7 @@
 
 #include "hydra/material.h"
 #include "hydra/diagnostic.h"
+#include "hydra/materialx.h"
 #include "hydra/node_util.h"
 #include "hydra/session.h"
 #include "hydra/util.h"
@@ -47,6 +48,7 @@ static SdfPath MaterialNodeNameToSdfPath(const TfToken &nodeName)
 // clang-format off
 TF_DEFINE_PRIVATE_TOKENS(CyclesMaterialTokens,
     (cycles)
+    (mtlx)
     ((cyclesSurface, "cycles:surface"))
     ((cyclesDisplacement, "cycles:displacement"))
     ((cyclesVolume, "cycles:volume"))
@@ -438,6 +440,25 @@ std::string StructuralKey(HdMaterialNetworkSchema network)
       }
       key += ";";
     }
+
+    /* The topology: a translated MaterialX network's can change with a parameter value, for
+     * example when a constant displacement becomes non-zero. */
+    key += nodeName.GetString() + ":" + type.GetString() + "(";
+    for (const TfToken &input : connections.GetNames()) {
+      HdMaterialConnectionVectorSchema vec = connections.Get(input);
+      for (size_t i = 0; i < vec.GetNumElements(); ++i) {
+        HdMaterialConnectionSchema connection = vec.GetElement(i);
+        key += input.GetString() + "<-";
+        if (HdTokenDataSourceHandle upstream = connection.GetUpstreamNodePath()) {
+          key += upstream->GetTypedValue(0.0f).GetString();
+        }
+        if (HdTokenDataSourceHandle output = connection.GetUpstreamNodeOutputName()) {
+          key += "." + output->GetTypedValue(0.0f).GetString();
+        }
+        key += ",";
+      }
+    }
+    key += ");";
   }
   return key;
 }
@@ -517,8 +538,21 @@ void HdCyclesMaterial::Sync(HdSceneDelegate *sceneDelegate,
     const HdContainerDataSourceHandle &primDs = prim.dataSource;
 
     HdMaterialSchema matSchema = HdMaterialSchema::GetFromParent(primDs);
-    /* Prefer cycles network if it exists, otherwise use universal network. */
-    HdMaterialNetworkSchema network = matSchema.GetMaterialNetwork(CyclesMaterialTokens->cycles);
+    /* The cycles network, then MaterialX translated to Cycles nodes, then the universal
+     * network. GetMaterialNetwork(context) falls back to the universal network, so the contexts
+     * are looked up as they are. */
+    const HdContainerDataSourceHandle contexts = matSchema.GetContainer();
+    const auto contextNetwork = [&contexts](const TfToken &context) {
+      return HdMaterialNetworkSchema(
+          contexts ? HdContainerDataSource::Cast(contexts->Get(context)) : nullptr);
+    };
+    HdMaterialNetworkSchema network = contextNetwork(CyclesMaterialTokens->cycles);
+    if (!network) {
+      if (HdMaterialNetworkSchema mtlx = contextNetwork(CyclesMaterialTokens->mtlx)) {
+        network = HdMaterialNetworkSchema(
+            HdCyclesTranslateMaterialX(id, mtlx.GetContainer(), primDs));
+      }
+    }
     if (!network) {
       network = matSchema.GetMaterialNetwork();
     }
@@ -866,6 +900,14 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
         nodeDesc.node = graph->create_node(nodeType);
         if (nodeDesc.mapping) {
           nodeDesc.mapping->initializeNode(nodeDesc.node);
+        }
+        /* Cycles' image texture node starts out scene linear, for Blender; its socket's
+         * default, and USD's, is to detect the colour space from the file and the config's file
+         * rules. An empty colour space parameter cannot say so. */
+        else if (nodeDesc.node->type->name == "image_texture") {
+          if (const SocketType *input = nodeType->find_input(ustring("colorspace"))) {
+            nodeDesc.node->set_default_value(*input);
+          }
         }
         _nodes.emplace(nodePath, nodeDesc);
       }

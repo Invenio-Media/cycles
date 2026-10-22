@@ -42,6 +42,7 @@ TF_DEFINE_PUBLIC_TOKENS(HdCyclesRenderSettingsTokens, HD_CYCLES_RENDER_SETTINGS_
 // clang-format off
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
     (cycles)
+    (mtlx)
     (openvdbAsset)
 );
 // clang-format on
@@ -747,7 +748,8 @@ TfToken HdCyclesDelegate::GetMaterialBindingPurpose() const
 
 TfTokenVector HdCyclesDelegate::GetMaterialRenderContexts() const
 {
-  return {_tokens->cycles};
+  /* MaterialX networks are translated to Cycles nodes (hydra/materialx.cpp). */
+  return {_tokens->cycles, _tokens->mtlx};
 }
 
 // Render stats / AOV

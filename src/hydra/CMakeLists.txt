@@ -33,6 +33,7 @@ set(SRC_HD_CYCLES_HEADERS
   instancer.h
   light.h
   material.h
+  materialx.h
   mesh.h
   node_util.h
   output_driver.h
@@ -54,6 +55,7 @@ set(SRC_HD_CYCLES
   instancer.cpp
   light.cpp
   material.cpp
+  materialx.cpp
   mesh.cpp
   node_util.cpp
   output_driver.cpp
