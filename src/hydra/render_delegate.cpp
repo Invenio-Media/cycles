@@ -19,6 +19,7 @@
 #include "hydra/volume.h"
 #include "graph/node_enum.h"
 #include "scene/film.h"
+#include "scene/light.h"
 #include "scene/integrator.h"
 #include "scene/scene.h"
 #include "scene/shader.h"
@@ -895,6 +896,12 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     if (newVal != _filmTransparent) {
       _filmTransparent = newVal;
       _renderParam->filmTransparent = newVal;
+      // Tag the light manager dirty so that the next CommitResources->UpdateScene()
+      // re-evaluates background transparency even when no light has changed.
+      {
+        const thread_scoped_lock sceneLock(scene->mutex);
+        scene->light_manager->tag_update(scene, LightManager::LIGHT_MODIFIED);
+      }
       _appliedSettings[key] = value;
       ++_settingsVersion;
     }
