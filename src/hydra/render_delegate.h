@@ -12,6 +12,7 @@
 
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
@@ -133,7 +134,7 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
   bool _filmTransparent = false;
 
   // Device type actually in use (upper-case Cycles type name, e.g. "CPU", "METAL").
-  mutable std::string _effectiveDeviceType;
+  std::string _effectiveDeviceType;
 
   // Settings that require a full Session rebuild (restart:true).
   // Stored so they can be replayed when a rebuild is triggered before any prims exist.
@@ -165,7 +166,7 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
   void RebuildSession();
 
   // Build the current session params (device selection + threads + tile).
-  CCL_NS::SessionParams BuildSessionParams() const;
+  std::pair<CCL_NS::SessionParams, std::string> BuildSessionParams() const;
   // Build the current scene params (BVH / texture cache).
   CCL_NS::SceneParams BuildSceneParams() const;
 

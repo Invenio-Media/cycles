@@ -179,12 +179,13 @@ std::string GetColorSpaceName(const VtValue &value)
 // Construction helpers
 // ---------------------------------------------------------------------------
 
-SessionParams HdCyclesDelegate::BuildSessionParams() const
+std::pair<SessionParams, std::string> HdCyclesDelegate::BuildSessionParams() const
 {
   SessionParams params;
   params.threads = 0;
   params.background = false;
   params.use_resolution_divider = false;
+  std::string effectiveDeviceType;
 
   // Threads
   {
@@ -242,12 +243,12 @@ SessionParams HdCyclesDelegate::BuildSessionParams() const
       vector<DeviceInfo> devs = Device::available_devices(DEVICE_MASK(type));
       if (!devs.empty()) {
         params.device = Device::get_multi_device(devs, params.threads, params.background);
-        _effectiveDeviceType = Device::string_from_type(type);
+        effectiveDeviceType = Device::string_from_type(type);
         break;
       }
     }
-    if (_effectiveDeviceType.empty()) {
-      _effectiveDeviceType = Device::string_from_type(DEVICE_CPU);
+    if (effectiveDeviceType.empty()) {
+      effectiveDeviceType = Device::string_from_type(DEVICE_CPU);
     }
   }
   else {
@@ -258,10 +259,10 @@ SessionParams HdCyclesDelegate::BuildSessionParams() const
           "Cycles: device type '%s' has no available devices; falling back to CPU",
           deviceType.c_str());
       devs = Device::available_devices(DEVICE_MASK_CPU);
-      _effectiveDeviceType = Device::string_from_type(DEVICE_CPU);
+      effectiveDeviceType = Device::string_from_type(DEVICE_CPU);
     }
     else {
-      _effectiveDeviceType = Device::string_from_type(type);
+      effectiveDeviceType = Device::string_from_type(type);
     }
     if (!devs.empty()) {
       params.device = Device::get_multi_device(devs, params.threads, params.background);
@@ -269,7 +270,7 @@ SessionParams HdCyclesDelegate::BuildSessionParams() const
   }
 
   params.denoise_device = params.device;
-  return params;
+  return {params, effectiveDeviceType};
 }
 
 SceneParams HdCyclesDelegate::BuildSceneParams() const
@@ -363,9 +364,9 @@ HdCyclesDelegate::HdCyclesDelegate(const HdRenderSettingsMap &settingsMap,
     _effectiveDeviceType = Device::string_from_type(session_->params.device.type);
   }
   else {
-    const SessionParams sessionParams = BuildSessionParams();
-    const SceneParams sceneParams = BuildSceneParams();
-    _renderParam = std::make_unique<HdCyclesSession>(sessionParams, sceneParams);
+    const auto br = BuildSessionParams();
+    _effectiveDeviceType = br.second;
+    _renderParam = std::make_unique<HdCyclesSession>(br.first, BuildSceneParams());
   }
 
   for (const auto &setting : settingsMap) {
@@ -411,10 +412,11 @@ void HdCyclesDelegate::RebuildSession()
   // Colorspace must be set process-wide before the Session is created.
   ApplyRenderingColorSpace(_requestedColorSpace);
 
-  const SessionParams sessionParams = BuildSessionParams();
+  const auto br = BuildSessionParams();
+  _effectiveDeviceType = br.second;
   const SceneParams sceneParams = BuildSceneParams();
 
-  auto newSession = std::make_unique<HdCyclesSession>(sessionParams, sceneParams);
+  auto newSession = std::make_unique<HdCyclesSession>(br.first, sceneParams);
   newSession->SetStageMetersPerUnit(stageMetersPerUnit);
   newSession->filmTransparent = _filmTransparent;
 
@@ -833,7 +835,7 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
       // current session already has; only rebuild (and recreate the device) when the Session
       // or Scene parameters actually change.
       const Session *session = _renderParam->session;
-      if (BuildSessionParams().modified(session->params) ||
+      if (BuildSessionParams().first.modified(session->params) ||
           BuildSceneParams().modified(session->scene->params))
       {
         RebuildSession();
