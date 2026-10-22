@@ -195,6 +195,17 @@ void HdCyclesMesh::PopulateNormals(HdSceneDelegate *sceneDelegate)
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
   const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
   const HdInterpolation interpolation = ReadPrimvarInterpolation(primvars, HdTokens->normals);
+
+  // Cycles computes face normals in the kernel for faces that are not smooth. Per-face
+  // normals render flat that way, and so does a bilinear mesh without normals, whose limit
+  // surface is flat across each face (the implicit cube is one). Other authored normals are
+  // interpolated; without any, Cycles averages vertex normals.
+  const bool smooth = !_flatShading && interpolation != HdInterpolationUniform &&
+                      (interpolation != HdInterpolationCount ||
+                       _topology.GetScheme() != PxOsdOpenSubdivTokens->bilinear);
+  std::ranges::fill(_geom->get_smooth(), smooth);
+  _geom->tag_smooth_modified();
+
   if (interpolation == HdInterpolationCount) {
     return;  // Ignore missing normals
   }
@@ -348,6 +359,7 @@ void HdCyclesMesh::PopulateTopology(HdSceneDelegate *sceneDelegate)
   if (auto ds = displayStyleSchema.GetFlatShadingEnabled()) {
     flatShadingEnabled = ds->GetTypedValue(0.0f);
   }
+  _flatShading = flatShadingEnabled;
 
   const HdMeshSchema meshSchema = HdMeshSchema::GetFromParent(prim.dataSource);
   const HdMeshTopologySchema topoSchema = meshSchema.GetTopology();
@@ -419,7 +431,8 @@ void HdCyclesMesh::PopulateTopology(HdSceneDelegate *sceneDelegate)
     _geom->set_subdivision_type(Mesh::SUBDIVISION_NONE);
   }
 
-  const bool smooth = !flatShadingEnabled;
+  // A bilinear limit surface is flat across each face; other schemes shade smooth.
+  const bool smooth = !flatShadingEnabled && subdivScheme != PxOsdOpenSubdivTokens->bilinear;
   const bool subdivision = _geom->get_subdivision_type() != Mesh::SUBDIVISION_NONE;
 
   // Initialize lookup table from polygon face to material shader index
@@ -485,11 +498,8 @@ void HdCyclesMesh::PopulateTopology(HdSceneDelegate *sceneDelegate)
       shader[i] = faceShaders[faceIndex];
     }
 
-    std::ranges::fill(_geom->get_smooth(), smooth);
-
     _geom->tag_triangles_modified();
     _geom->tag_shader_modified();
-    _geom->tag_smooth_modified();
   }
   else {
     const HdSubdivisionTagsSchema subdivSchema = HdSubdivisionTagsSchema::GetFromParent(

@@ -39,6 +39,8 @@ class HdCyclesMesh final : public HdCyclesGeometry<PXR_NS::HdMesh, CCL_NS::Mesh>
   PXR_NS::HdMeshUtil _util;
   PXR_NS::HdMeshTopology _topology;
   PXR_NS::VtIntArray _primitiveParams;
+  // The display style's flat shading, kept for PopulateNormals, which sets the smooth flags.
+  bool _flatShading = false;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE
