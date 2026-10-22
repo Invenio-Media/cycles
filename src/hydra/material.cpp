@@ -442,7 +442,8 @@ std::string StructuralKey(HdMaterialNetworkSchema network)
     }
 
     /* The topology: a translated MaterialX network's can change with a parameter value, for
-     * example when a constant displacement becomes non-zero. */
+     * example when a constant displacement becomes non-zero. Connection edits change it too;
+     * those arrive as resource changes, which rebuild the graph in any case. */
     key += nodeName.GetString() + ":" + type.GetString() + "(";
     for (const TfToken &input : connections.GetNames()) {
       HdMaterialConnectionVectorSchema vec = connections.Get(input);

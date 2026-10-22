@@ -22,6 +22,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <string_view>
 #include <unordered_map>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
@@ -162,7 +163,29 @@ std::optional<float> Fold(const std::string &op, const float a, const float b)
   if (op == "power") {
     return std::pow(a, b);
   }
+  if (op == "floored_modulo") {
+    return b != 0.0f ? a - b * std::floor(a / b) : 0.0f;
+  }
   return std::nullopt;
+}
+
+/* The unary Cycles math operations that fold on a constant. */
+std::optional<float> FoldUnary(const std::string &op, const float a)
+{
+  static const std::unordered_map<std::string, float (*)(float)> ops = {
+      {"absolute", [](const float x) { return std::fabs(x); }},
+      {"floor", [](const float x) { return std::floor(x); }},
+      {"ceil", [](const float x) { return std::ceil(x); }},
+      {"round", [](const float x) { return std::round(x); }},
+      {"sign", [](const float x) { return float((x > 0.0f) - (x < 0.0f)); }},
+      {"sine", [](const float x) { return std::sin(x); }},
+      {"cosine", [](const float x) { return std::cos(x); }},
+      {"tangent", [](const float x) { return std::tan(x); }},
+      {"sqrt", [](const float x) { return x > 0.0f ? std::sqrt(x) : 0.0f; }},
+      {"exponent", [](const float x) { return std::exp(x); }},
+  };
+  const auto it = ops.find(op);
+  return it != ops.end() ? std::optional<float>(it->second(a)) : std::nullopt;
 }
 
 /* MaterialX nodes whose operation is one Cycles math (floats) or vector_math (colors and
@@ -217,46 +240,70 @@ class MaterialXTranslator {
   std::vector<PendingConnection> _pending;
   /* The Cycles type of each node this translation authored, e.g. vector_math. */
   std::unordered_map<TfToken, std::string, TfToken::HashFunctor> _cyclesTypes;
+  /* The MaterialX definitions of the nodes retyped to the delegate's UsdPreviewSurface
+   * mapping, which keep their MaterialX inputs. */
+  std::unordered_map<TfToken, SdrShaderNodeConstPtr, TfToken::HashFunctor> _retyped;
+  /* What the translation could not carry over, reported once per material. */
+  std::set<std::string> _notes;
 
-  /* A constant shaped for the Cycles socket it is written to: a float fills a colour or vector
-   * socket, a colour's average fills a float socket. Other nodes take it as authored. */
+  /* A constant shaped for the socket it is written to: a float fills a colour or vector
+   * socket, a colour's average fills a float socket. The socket's type comes from Cycles, or
+   * for a retyped node from its MaterialX definition. */
   VtValue ShapeForSocket(const TfToken &node, const TfToken &input, const VtValue &value) const
   {
     const VtValue widened = ToCycles(value);
-    const auto it = _cyclesTypes.find(node);
-    const NodeType *type = it != _cyclesTypes.end() ? NodeType::find(ustring(it->second)) :
-                                                      nullptr;
-    const SocketType *socket = type ? type->find_input(ustring(input.GetString())) : nullptr;
-    if (!socket) {
-      return widened;
+    bool isFloat = false;
+    bool isVector = false;
+    if (const auto it = _cyclesTypes.find(node); it != _cyclesTypes.end()) {
+      const NodeType *type = NodeType::find(ustring(it->second));
+      const SocketType *socket = type ? type->find_input(ustring(input.GetString())) : nullptr;
+      isFloat = socket && socket->type == SocketType::FLOAT;
+      isVector = socket &&
+                 (socket->type == SocketType::COLOR || socket->type == SocketType::VECTOR ||
+                  socket->type == SocketType::POINT || socket->type == SocketType::NORMAL);
     }
-    switch (socket->type) {
-      case SocketType::FLOAT:
-        return AsFloat(Operand::Constant(widened)).constant;
-      case SocketType::COLOR:
-      case SocketType::VECTOR:
-      case SocketType::POINT:
-      case SocketType::NORMAL:
-        return AsVector(Operand::Constant(widened)).constant;
-      default:
-        return widened;
+    else if (const auto it = _retyped.find(node); it != _retyped.end()) {
+      const SdrShaderPropertyConstPtr property = it->second->GetShaderInput(input);
+      const std::string type = property ? property->GetType().GetString() : std::string();
+      isFloat = type == "float";
+      isVector = type == "color" || type == "vector" || type == "normal" || type == "point";
     }
+    if (isFloat) {
+      return AsFloat(Operand::Constant(widened)).constant;
+    }
+    if (isVector) {
+      return AsVector(Operand::Constant(widened)).constant;
+    }
+    return widened;
   }
 
   /* The node being translated: its name, its MaterialX value type (the nodedef's suffix, such
    * as color3 or vector3FA) and its inputs as authored or defaulted. */
   TfToken _node;
+  TfToken _nodeDefinition;
   std::string _valueType;
   std::unordered_map<TfToken, Operand, TfToken::HashFunctor> _inputs;
+  /* Its inputs that are connected, or authored with a value other than the default. */
+  std::set<TfToken> _setInputs;
   TfToken _fileColorSpace;
   int _helpers = 0;
+
+  /* Notes inputs of the current node that Cycles has no equivalent for, when they are set. */
+  void Ignore(std::initializer_list<const char *> names)
+  {
+    for (const char *name : names) {
+      if (_setInputs.count(TfToken(name))) {
+        _notes.insert(_nodeDefinition.GetString() + "." + name + " has no Cycles equivalent");
+      }
+    }
+  }
 
   void ReadInputs(const SdrShaderNodeConstPtr &sdrNode);
   void ClearNode();
   bool TranslateNode(const std::string &family);
   void Write(const TfToken &node, const TfToken &input, const Operand &value);
   void Rewire();
-  std::optional<Operand> Resolve(const InputConnection &connection) const;
+  std::optional<Operand> Resolve(const InputConnection &connection);
 
   /* The current node's value type is floats, not colors or vectors. */
   bool IsFloatType() const
@@ -380,6 +427,18 @@ Operand MaterialXTranslator::Math(const char *op,
 
 Operand MaterialXTranslator::Unary(const char *op, const Operand &a, const bool vector)
 {
+  if (a.IsConstant()) {
+    if (vector) {
+      const GfVec3f x = ToVec3(a.constant);
+      if (const std::optional<float> r0 = FoldUnary(op, x[0])) {
+        return Operand::Constant(
+            VtValue(GfVec3f(*r0, *FoldUnary(op, x[1]), *FoldUnary(op, x[2]))));
+      }
+    }
+    else if (const std::optional<float> r = FoldUnary(op, ToFloat(a.constant))) {
+      return Operand::Constant(VtValue(*r));
+    }
+  }
   const TfToken node = AddNode(vector ? "vector_math" : "math");
   SetValue(node, "math_type", VtValue(TfToken(op)));
   Set(node, vector ? "vector1" : "value1", vector ? AsVector(a) : AsFloat(a));
@@ -427,17 +486,24 @@ Operand MaterialXTranslator::Component(const Operand &vector, const int index, c
 void MaterialXTranslator::ReadInputs(const SdrShaderNodeConstPtr &sdrNode)
 {
   _inputs.clear();
+  _setInputs.clear();
   for (const TfToken &name : sdrNode->GetShaderInputNames()) {
     const auto connections = _network.GetNodeInputConnection(_node, name);
     if (!connections.empty()) {
       _inputs[name].connection = connections[0];
+      _setInputs.insert(name);
       continue;
     }
+    const SdrShaderPropertyConstPtr input = sdrNode->GetShaderInput(name);
     VtValue value = _network.GetNodeParameterValue(_node, name);
-    if (value.IsEmpty()) {
+    if (!value.IsEmpty()) {
+      if (!input || value != input->GetDefaultValue()) {
+        _setInputs.insert(name);
+      }
+    }
+    else {
       /* Inputs bound to geometry (UV0, the normal, the tangent) have no default; their
        * translations use the geometry. */
-      const SdrShaderPropertyConstPtr input = sdrNode->GetShaderInput(name);
       if (!input || input->GetMetadata().count(_tokens->defaultgeomprop)) {
         continue;
       }
@@ -466,6 +532,18 @@ void MaterialXTranslator::TranslateMath(const MathOp &op)
   const char *cyclesOp = vector ? op.vectorOp : op.floatOp;
   if (op.unary) {
     Provide("out", Unary(cyclesOp, In("in"), vector));
+    return;
+  }
+  /* MaterialX's modulo is floored, as Cycles' float floored_modulo is; its vector modulo
+   * truncates, so vectors take x − y × floor(x ÷ y). */
+  if (vector && std::string_view(op.floatOp) == "floored_modulo") {
+    const Operand &x = In("in1");
+    const Operand &y = In("in2");
+    Provide("out",
+            Math("subtract",
+                 x,
+                 Math("multiply", y, Unary("floor", Math("divide", x, y, true), true), true),
+                 true));
     return;
   }
   Provide("out", Math(cyclesOp, In("in1"), In("in2"), vector));
@@ -515,6 +593,16 @@ void MaterialXTranslator::TranslateStandardSurface()
   Set(node, "thin_wall", AsFloat(In("thin_walled")));
   Set(node, "normal", In("normal"));
   Set(node, "tangent", In("tangent"));
+  Ignore({"transmission_color",
+          "transmission_depth",
+          "transmission_scatter",
+          "transmission_scatter_anisotropy",
+          "transmission_dispersion",
+          "transmission_extra_roughness",
+          "coat_anisotropy",
+          "coat_rotation",
+          "coat_affect_color",
+          "coat_affect_roughness"});
   Provide("out", Operand::Output(node, "BSDF"));
 }
 
@@ -565,6 +653,14 @@ void MaterialXTranslator::TranslateOpenPbrSurface()
   Set(node, "thin_wall", AsFloat(In("geometry_thin_walled")));
   Set(node, "normal", In("geometry_normal"));
   Set(node, "tangent", In("geometry_tangent"));
+  Ignore({"transmission_color",
+          "transmission_depth",
+          "transmission_scatter",
+          "transmission_scatter_anisotropy",
+          "transmission_dispersion_scale",
+          "transmission_dispersion_abbe_number",
+          "coat_roughness_anisotropy",
+          "coat_darkening"});
   Provide("out", Operand::Output(node, "BSDF"));
 }
 
@@ -664,6 +760,11 @@ void MaterialXTranslator::TranslateImage(const bool tiled)
 
   /* MaterialX's address modes, per axis, onto Cycles' one extension mode, by the U axis. */
   const std::string addressMode = ConstantString("uaddressmode");
+  const std::string vAddressMode = ConstantString("vaddressmode");
+  if (!vAddressMode.empty() && vAddressMode != addressMode) {
+    _notes.insert(_nodeDefinition.GetString() + " uses uaddressmode '" + addressMode +
+                  "' for both axes, not vaddressmode '" + vAddressMode + "'");
+  }
   if (!addressMode.empty()) {
     static const std::unordered_map<std::string, const char *> extensions = {
         {"periodic", "periodic"}, {"clamp", "clamp"}, {"mirror", "mirror"}, {"constant", "black"}};
@@ -736,6 +837,10 @@ bool MaterialXTranslator::TranslateNode(const std::string &family)
   }
 
   if (family == "texcoord") {
+    if (const int index = int(ConstantFloat("index", 0.0f)); index != 0) {
+      _notes.insert(_nodeDefinition.GetString() + " index " + std::to_string(index) +
+                    " reads the default UV set");
+    }
     Provide("out", DefaultUV());
     _network.DeleteNode(_node);
     return true;
@@ -955,7 +1060,7 @@ bool MaterialXTranslator::TranslateNode(const std::string &family)
 
 /* What provides a MaterialX output after translation, following pass-through nodes. Empty
  * when the upstream node was left out. */
-std::optional<Operand> MaterialXTranslator::Resolve(const InputConnection &connection) const
+std::optional<Operand> MaterialXTranslator::Resolve(const InputConnection &connection)
 {
   InputConnection current = connection;
   for (int depth = 0; depth < 64; ++depth) {
@@ -971,6 +1076,8 @@ std::optional<Operand> MaterialXTranslator::Resolve(const InputConnection &conne
     }
     current = *it->second.connection;
   }
+  _notes.insert("a cycle of pass-through nodes at " + connection.upstreamNodeName.GetString() +
+                " is left unconnected");
   return Operand();
 }
 
@@ -1050,6 +1157,7 @@ void MaterialXTranslator::Translate()
     }
 
     _node = node;
+    _nodeDefinition = type;
     _helpers = 0;
     const std::string family = sdrNode->GetFamily().GetString();
     /* ND_<family>_<type>, e.g. ND_add_color3FA or ND_image_vector3. */
@@ -1063,7 +1171,10 @@ void MaterialXTranslator::Translate()
      * delegate maps already, with the same inputs and outputs: retype them in place. */
     if (family == "UsdPreviewSurface" || family == "UsdUVTexture") {
       _network.SetNodeType(node, TfToken(family));
-      _outputs[{node, TfToken("out")}] = Operand::Output(node, "surface");
+      _retyped[node] = sdrNode;
+      if (family == "UsdPreviewSurface") {
+        _outputs[{node, TfToken("out")}] = Operand::Output(node, "surface");
+      }
       continue;
     }
 
@@ -1085,10 +1196,14 @@ void MaterialXTranslator::Translate()
 
   for (const std::string &type : untranslatedTypes) {
     HDCYCLES_WARN(
-        "MaterialX material %s: %s has no Cycles translation; the inputs it feeds "
-        "are left unconnected",
+        "MaterialX material %s: %s has no Cycles translation; the inputs it feeds are left "
+        "unconnected, at the Cycles node's defaults",
         _network.GetMaterialPrimPath().GetText(),
         type.c_str());
+  }
+  for (const std::string &note : _notes) {
+    HDCYCLES_WARN(
+        "MaterialX material %s: %s", _network.GetMaterialPrimPath().GetText(), note.c_str());
   }
 }
 
