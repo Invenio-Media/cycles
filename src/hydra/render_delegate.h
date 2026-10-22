@@ -10,6 +10,7 @@
 #include <pxr/imaging/hd/renderDelegate.h>
 #include <pxr/imaging/hgi/hgi.h>
 
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -80,14 +81,6 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
   PXR_NS::HdRenderPassSharedPtr CreateRenderPass(
       PXR_NS::HdRenderIndex *index, const PXR_NS::HdRprimCollection &collection) override;
 
-  // Called by HdCyclesRenderPass destructor to keep _renderPassCount accurate.
-  void NotifyRenderPassDestroyed()
-  {
-    if (_renderPassCount > 0) {
-      --_renderPassCount;
-    }
-  }
-
   PXR_NS::HdInstancer *CreateInstancer(PXR_NS::HdSceneDelegate *delegate,
                                        const PXR_NS::SdfPath &id) override;
   void DestroyInstancer(PXR_NS::HdInstancer *instancer) override;
@@ -153,10 +146,9 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
   // restart-only settings trigger a Session rebuild; after it goes positive they are ignored.
   int _realPrimCount = 0;
 
-  // Count of live HdCyclesRenderPass instances. Session rebuild is only safe when both
-  // _realPrimCount and _renderPassCount are zero; a live render pass holds a raw pointer
-  // into _renderParam and would dangle after a rebuild.
-  int _renderPassCount = 0;
+  // Count of live HdCyclesRenderPass instances, shared into each pass so the pass
+  // destructor can decrement it without a backpointer to the delegate.
+  std::shared_ptr<int> _renderPassCount;
 
   // Makes Cycles render in this colorspace of the OCIO config; empty, or a name the config
   // does not have, means the config's scene_linear role.

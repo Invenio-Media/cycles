@@ -9,13 +9,16 @@
 
 #include <pxr/imaging/hd/renderPass.h>
 
+#include <memory>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 class HdCyclesRenderPass final : public PXR_NS::HdRenderPass {
  public:
   HdCyclesRenderPass(PXR_NS::HdRenderIndex *index,
                      const PXR_NS::HdRprimCollection &collection,
-                     HdCyclesSession *renderParam);
+                     HdCyclesSession *renderParam,
+                     std::shared_ptr<int> passCount);
   ~HdCyclesRenderPass() override;
 
   bool IsConverged() const override;
@@ -29,6 +32,8 @@ class HdCyclesRenderPass final : public PXR_NS::HdRenderPass {
   void _MarkCollectionDirty() override;
 
   HdCyclesSession *_renderParam;
+  // Shared counter; destructor decrements without needing a delegate backpointer.
+  std::shared_ptr<int> _passCount;
   unsigned int _lastSettingsVersion = 0;
 };
 

@@ -317,7 +317,7 @@ SceneParams HdCyclesDelegate::BuildSceneParams() const
 
 bool HdCyclesDelegate::CanRebuildSession() const
 {
-  return _renderParam->OwnsSession() && _realPrimCount == 0 && _renderPassCount == 0;
+  return _renderParam->OwnsSession() && _realPrimCount == 0 && *_renderPassCount == 0;
 }
 
 static bool IsRestartOnlyKey(const TfToken &key)
@@ -340,7 +340,7 @@ static bool IsRestartOnlyKey(const TfToken &key)
 HdCyclesDelegate::HdCyclesDelegate(const HdRenderSettingsMap &settingsMap,
                                    Session *session_,
                                    const bool keep_nodes)
-    : HdRenderDelegate()
+    : HdRenderDelegate(), _renderPassCount(std::make_shared<int>(0))
 {
   {
     const std::lock_guard<std::mutex> lock(g_colorSpaceMutex);
@@ -527,8 +527,9 @@ bool HdCyclesDelegate::Resume()
 HdRenderPassSharedPtr HdCyclesDelegate::CreateRenderPass(HdRenderIndex *index,
                                                          const HdRprimCollection &collection)
 {
-  ++_renderPassCount;
-  return HdRenderPassSharedPtr(new HdCyclesRenderPass(index, collection, _renderParam.get()));
+  // The pass constructor increments *_renderPassCount; destructor decrements it.
+  return HdRenderPassSharedPtr(
+      new HdCyclesRenderPass(index, collection, _renderParam.get(), _renderPassCount));
 }
 
 HdInstancer *HdCyclesDelegate::CreateInstancer(HdSceneDelegate *delegate,

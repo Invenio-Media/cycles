@@ -26,9 +26,11 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 HdCyclesRenderPass::HdCyclesRenderPass(HdRenderIndex *index,
                                        const HdRprimCollection &collection,
-                                       HdCyclesSession *renderParam)
-    : HdRenderPass(index, collection), _renderParam(renderParam)
+                                       HdCyclesSession *renderParam,
+                                       std::shared_ptr<int> passCount)
+    : HdRenderPass(index, collection), _renderParam(renderParam), _passCount(std::move(passCount))
 {
+  ++(*_passCount);
   Session *const session = _renderParam->session;
   // Reset cancel state so session thread can continue rendering
   session->progress.reset();
@@ -49,12 +51,8 @@ HdCyclesRenderPass::~HdCyclesRenderPass()
 {
   Session *const session = _renderParam->session;
   session->cancel(true);
-  // Keep the delegate's live-render-pass counter accurate so that CanRebuildSession()
-  // does not permit a Session swap while a render pass still holds _renderParam.
-  if (auto *const rd = static_cast<HdCyclesDelegate *>(
-          GetRenderIndex()->GetRenderDelegate())) {
-    rd->NotifyRenderPassDestroyed();
-  }
+  // Decrement through the shared counter; no delegate backpointer needed.
+  --(*_passCount);
 }
 
 bool HdCyclesRenderPass::IsConverged() const
