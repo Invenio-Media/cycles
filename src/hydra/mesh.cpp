@@ -10,8 +10,6 @@
 #include "hydra/util.h"
 #include "scene/mesh.h"
 
-#include <algorithm>
-
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/imaging/hd/geomSubsetSchema.h>
 #include <pxr/imaging/hd/legacyDisplayStyleSchema.h>
@@ -21,6 +19,8 @@
 #include <pxr/imaging/hd/meshTopologySchema.h>
 #include <pxr/imaging/hd/sceneIndex.h>
 #include <pxr/imaging/hd/subdivisionTagsSchema.h>
+
+#include <algorithm>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
@@ -173,14 +173,17 @@ void HdCyclesMesh::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyBit
     PopulatePrimvars(sceneDelegate);
   }
 
-  if (settingsDirty) {
+  /* Also when the mesh moves: pixel-space dicing projects it through its transform. */
+  if (settingsDirty || HdChangeTracker::IsTransformDirty(dirtyBits, GetId())) {
     ApplySubdivisionSettings();
   }
 
+  /* A re-tessellated subdivision mesh can have a different number of triangles, so its BVH is
+   * rebuilt, not refit: new dicing settings, a move or new points re-tessellate it. */
   rebuild = (_geom->triangles_is_modified()) || (_geom->subd_start_corner_is_modified()) ||
             (_geom->subd_num_corners_is_modified()) || (_geom->subd_shader_is_modified()) ||
             (_geom->subd_smooth_is_modified()) || (_geom->subd_ptex_offset_is_modified()) ||
-            (_geom->subd_face_corners_is_modified());
+            (_geom->subd_face_corners_is_modified()) || _geom->need_tesselation();
 }
 
 void HdCyclesMesh::PopulatePoints(HdSceneDelegate *sceneDelegate)
@@ -646,8 +649,15 @@ bool HdCyclesMesh::ReadSubdivisionSettings(HdSceneDelegate *sceneDelegate)
   const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(
       GetPrim(sceneDelegate, GetId()).dataSource);
 
+  /* Unauthored, or not an int, leaves Hydra's refine level. Blender's largest level bounds it;
+   * the dicing rate bounds the tessellation well before that. */
   const VtValue maxLevel = ReadPrimvar(primvars, _tokens->maxLevel);
-  const int level = maxLevel.IsEmpty() ? -1 : std::max(HdCyclesSettingValue<int>(maxLevel, 0), 0);
+  int level = HdCyclesSettingValue<int>(maxLevel, -1);
+  if (level < 0 && !maxLevel.IsEmpty()) {
+    HDCYCLES_WARN("%s: cycles:object:subdivision:max_level must be a non-negative int; ignored.",
+                  GetId().GetText());
+  }
+  level = std::min(level, 16);
   /* Blender's smallest dicing rate; smaller ones tessellate without bound. */
   _subdDicingRate = std::max(
       HdCyclesSettingValue<float>(ReadPrimvar(primvars, _tokens->dicingRate), 1.0f), 0.1f);
