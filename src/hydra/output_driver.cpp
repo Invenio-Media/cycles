@@ -61,8 +61,11 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
           std::for_each_n(values, numValues, [&aovPass](float &v) { v *= aovPass.scale; });
         }
       };
+      // The tile's place in the render buffer, which is in framing pixel space.
+      const GfVec2i origin = _renderParam->GetDataWindowOrigin() +
+                             GfVec2i(tile.offset.x, tile.offset.y);
       // Avoid extra copy by mapping render buffer directly when dimensions/format match the tile
-      if (tile.offset.x == 0 && tile.offset.y == 0 && tile.size.x == renderBuffer->GetWidth() &&
+      if (origin == GfVec2i(0) && tile.size.x == renderBuffer->GetWidth() &&
           tile.size.y == renderBuffer->GetHeight() &&
           (format >= HdFormatFloat32 && format <= HdFormatFloat32Vec4))
       {
@@ -76,11 +79,8 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
         if (tile.get_pass_pixels(aovPass.passName, channels, pixels.data())) {
           applyScale(pixels.data());
           renderBuffer->Map();
-          renderBuffer->WritePixels(pixels.data(),
-                                    GfVec2i(tile.offset.x, tile.offset.y),
-                                    GfVec2i(tile.size.x, tile.size.y),
-                                    channels,
-                                    aovPass.isId);
+          renderBuffer->WritePixels(
+              pixels.data(), origin, GfVec2i(tile.size.x, tile.size.y), channels, aovPass.isId);
           renderBuffer->Unmap();
         }
         else {

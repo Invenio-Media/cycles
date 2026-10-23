@@ -8,6 +8,8 @@
 #include "hydra/config.h"
 
 #include <pxr/base/gf/camera.h>
+#include <pxr/imaging/cameraUtil/conformWindow.h>
+#include <pxr/imaging/cameraUtil/framing.h>
 #include <pxr/imaging/hd/camera.h>
 #include <pxr/imaging/hd/timeSampleArray.h>
 
@@ -18,16 +20,26 @@ class HdCyclesCamera final : public PXR_NS::HdCamera {
   HdCyclesCamera(const PXR_NS::SdfPath &sprimId);
   ~HdCyclesCamera() override;
 
-  void ApplyCameraSettings(PXR_NS::HdRenderParam *renderParam, CCL_NS::Camera *cam) const;
+  /* Sets a Cycles camera to render a framing's data window. Its raster is framing pixel space,
+   * from the origin to the data window's far corner (the render pass renders the data window
+   * of it), and the camera is conformed to the display window, with its pixel aspect and the
+   * window policy: a data window inside the display window crops, one beyond it overscans. */
+  void ApplyCameraSettings(PXR_NS::HdRenderParam *renderParam,
+                           const PXR_NS::CameraUtilFraming &framing,
+                           PXR_NS::CameraUtilConformWindowPolicy windowPolicy,
+                           CCL_NS::Camera *cam) const;
 
   static void ApplyCameraSettings(PXR_NS::HdRenderParam *renderParam,
                                   const PXR_NS::GfCamera &dataUnconformedWindow,
+                                  const PXR_NS::CameraUtilFraming &framing,
                                   PXR_NS::CameraUtilConformWindowPolicy windowPolicy,
                                   CCL_NS::Camera *cam);
+  /* For a render pass without a camera prim, as the free viewport camera. */
   static void ApplyCameraSettings(PXR_NS::HdRenderParam *renderParam,
                                   const PXR_NS::GfMatrix4d &worldToViewMatrix,
                                   const PXR_NS::GfMatrix4d &projectionMatrix,
-                                  const std::vector<PXR_NS::GfVec4d> &clipPlanes,
+                                  const PXR_NS::CameraUtilFraming &framing,
+                                  PXR_NS::CameraUtilConformWindowPolicy windowPolicy,
                                   CCL_NS::Camera *cam);
 
   PXR_NS::HdDirtyBits GetInitialDirtyBitsMask() const override;

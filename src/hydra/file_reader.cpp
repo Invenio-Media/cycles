@@ -10,6 +10,7 @@
 #include "util/path.h"
 #include "util/unique_ptr.h"
 
+#include "scene/camera.h"
 #include "scene/scene.h"
 
 #include <pxr/base/plug/registry.h>
@@ -149,7 +150,14 @@ void HdCyclesFileReader::read(Session *session, const char *filepath, const bool
         HdSprim *sprim = render_index->GetSprim(HdPrimTypeTokens->camera, prim.GetPath());
         if (sprim) {
           HdCyclesCamera *camera = dynamic_cast<HdCyclesCamera *>(sprim);
-          camera->ApplyCameraSettings(render_delegate.GetRenderParam(), session->scene->camera);
+          /* The camera's own resolution is both the display and the data window. */
+          Camera *const cam = session->scene->camera;
+          camera->ApplyCameraSettings(
+              render_delegate.GetRenderParam(),
+              CameraUtilFraming(
+                  GfRect2i(GfVec2i(0), cam->get_full_width(), cam->get_full_height())),
+              camera->GetWindowPolicy(),
+              cam);
           break;
         }
       }

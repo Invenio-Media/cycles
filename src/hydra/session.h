@@ -14,6 +14,9 @@
 #include <string>
 #include <vector>
 
+#include <pxr/base/gf/vec2i.h>
+#include <pxr/base/gf/vec4f.h>
+#include <pxr/imaging/cameraUtil/conformWindow.h>
 #include <pxr/imaging/hd/renderDelegate.h>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
@@ -41,6 +44,17 @@ struct HdCyclesAovPass {
   // Multiplies the pass values. The scene is in metres inside Cycles; positions and depths
   // go back to stage units.
   float scale = 1.0f;
+};
+
+// A render product's framing, as husk sends it: render settings rather than a render-pass
+// framing, with render buffers the size of the data window.
+struct HdCyclesProductFraming {
+  // The display window; (0, 0) when no product framing was sent.
+  PXR_NS::GfVec2i resolution = PXR_NS::GfVec2i(0);
+  // xmin, ymin, xmax, ymax of the display window, with y up.
+  PXR_NS::GfVec4f dataWindowNDC = PXR_NS::GfVec4f(0.0f, 0.0f, 1.0f, 1.0f);
+  float pixelAspectRatio = 1.0f;
+  PXR_NS::CameraUtilConformWindowPolicy windowPolicy = PXR_NS::CameraUtilFit;
 };
 
 class HdCyclesSession final : public PXR_NS::HdRenderParam {
@@ -101,6 +115,19 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
 
   void RemoveAovBinding(PXR_NS::HdRenderBuffer *renderBuffer);
 
+  // Where the rendered data window starts in the render buffers, which the output driver
+  // places Cycles' tiles from. Read under GetAovMutex().
+  PXR_NS::GfVec2i GetDataWindowOrigin() const
+  {
+    return _dataWindowOrigin;
+  }
+
+  void SetDataWindowOrigin(const PXR_NS::GfVec2i &origin)
+  {
+    const CCL_NS::thread_scoped_lock lock(_aovMutex);
+    _dataWindowOrigin = origin;
+  }
+
   CCL_NS::Session *session;
   bool keep_nodes;
 
@@ -111,12 +138,16 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   // Light and shadow linking; lights and geometry report to it as they sync.
   HdCyclesLightLinking lightLinking;
 
+  // Set by husk; the render pass frames from it when it has no framing of its own.
+  HdCyclesProductFraming productFraming;
+
  private:
   const bool _ownCyclesSession;
   double _stageMetersPerUnit = 0.01;
   PXR_NS::HdRenderPassAovBindingVector _aovBindings;
   std::vector<HdCyclesAovPass> _aovPasses;
   PXR_NS::HdRenderPassAovBinding _displayAovBinding;
+  PXR_NS::GfVec2i _dataWindowOrigin = PXR_NS::GfVec2i(0);
   mutable CCL_NS::thread_mutex _aovMutex;
 };
 

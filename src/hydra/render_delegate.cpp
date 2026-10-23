@@ -44,6 +44,16 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     (cycles)
     (mtlx)
     (openvdbAsset)
+    // UsdRenderSettingsBase attributes, which husk sends as render settings.
+    (resolution)
+    (dataWindowNDC)
+    (pixelAspectRatio)
+    (aspectRatioConformPolicy)
+    (expandAperture)
+    (cropAperture)
+    (adjustApertureWidth)
+    (adjustApertureHeight)
+    (adjustPixelAspectRatio)
 );
 // clang-format on
 
@@ -906,6 +916,40 @@ HdRenderSettingDescriptorList HdCyclesDelegate::GetRenderSettingDescriptors() co
 
 void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS::VtValue &value)
 {
+  /* The render product's framing, which husk sends instead of a render-pass framing. The render
+   * pass frames from it (HdCyclesRenderPass::_Execute). */
+  {
+    HdCyclesProductFraming &framing = _renderParam->productFraming;
+    bool framingKey = true;
+    if (key == _tokens->resolution && value.IsHolding<GfVec2i>()) {
+      framing.resolution = value.UncheckedGet<GfVec2i>();
+    }
+    else if (key == _tokens->dataWindowNDC && value.IsHolding<GfVec4f>()) {
+      framing.dataWindowNDC = value.UncheckedGet<GfVec4f>();
+    }
+    else if (key == _tokens->pixelAspectRatio && value.IsHolding<float>()) {
+      framing.pixelAspectRatio = value.UncheckedGet<float>();
+    }
+    else if (key == _tokens->aspectRatioConformPolicy && value.IsHolding<TfToken>()) {
+      /* UsdRender's policies, as CameraUtil's. adjustPixelAspectRatio leaves the aperture as it
+       * is, without changing the pixel aspect. */
+      const TfToken &policy = value.UncheckedGet<TfToken>();
+      framing.windowPolicy = policy == _tokens->cropAperture        ? CameraUtilCrop :
+                             policy == _tokens->adjustApertureWidth ? CameraUtilMatchVertically :
+                             policy == _tokens->adjustApertureHeight ?
+                                                                      CameraUtilMatchHorizontally :
+                             policy == _tokens->adjustPixelAspectRatio ? CameraUtilDontConform :
+                                                                         CameraUtilFit;
+    }
+    else {
+      framingKey = false;
+    }
+    if (framingKey) {
+      ++_settingsVersion;
+      return;
+    }
+  }
+
   if (IsRestartOnlyKey(key)) {
     _restartSettings[key] = value;
     if (CanRebuildSession()) {

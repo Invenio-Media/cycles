@@ -22,6 +22,8 @@
 
 #include <pxr/imaging/hd/renderPassState.h>
 
+#include <cmath>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 HdCyclesRenderPass::HdCyclesRenderPass(HdRenderIndex *index,
@@ -119,30 +121,47 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
       }
     }
 
-    // Update camera dimensions to the viewport size
+    /* The framing: the display window, with the pixel aspect and window policy, frames the
+     * camera; the data window is the pixels to render, which can crop or overscan it. */
     CameraUtilFraming framing = renderPassState->GetFraming();
+    CameraUtilConformWindowPolicy windowPolicy = renderPassState->GetWindowPolicy();
     if (!framing.IsValid()) {
       const GfVec4f vp = renderPassState->GetViewport();
-      framing = CameraUtilFraming(GfRect2i(GfVec2i(0), int(vp[2]), int(vp[3])));
+      const GfRect2i viewport(GfVec2i(0), int(vp[2]), int(vp[3]));
+      const HdCyclesProductFraming &product = _renderParam->productFraming;
+      if (product.resolution[0] > 0 && product.resolution[1] > 0) {
+        /* husk sends the product's framing as render settings, with render buffers the size of
+         * the data window: the data window is at the origin and the display window, the
+         * resolution, is offset from it. The data window holds the pixels whose centres are in
+         * dataWindowNDC, which has y up. */
+        const GfVec4f &ndc = product.dataWindowNDC;
+        const GfVec2f resolution(product.resolution[0], product.resolution[1]);
+        const GfVec2f corner(std::ceil(ndc[0] * resolution[0] - 0.5f),
+                             std::ceil((1.0f - ndc[3]) * resolution[1] - 0.5f));
+        framing = CameraUtilFraming(
+            GfRange2f(-corner, resolution - corner), viewport, product.pixelAspectRatio);
+        windowPolicy = product.windowPolicy;
+      }
+      else {
+        framing = CameraUtilFraming(viewport);
+      }
     }
 
     /* The dicing camera is the render camera, as in Blender: adaptive subdivision measures its
      * dicing rate in pixels as this camera sees them. Cycles re-dices only when a mesh changes,
      * so a moving camera doesn't re-dice. */
     for (Camera *const cam : {scene->camera, scene->dicing_camera}) {
-      cam->set_full_width(framing.dataWindow.GetWidth());
-      cam->set_full_height(framing.dataWindow.GetHeight());
-
       if (const auto *const camera = static_cast<const HdCyclesCamera *>(
               renderPassState->GetCamera()))
       {
-        camera->ApplyCameraSettings(_renderParam, cam);
+        camera->ApplyCameraSettings(_renderParam, framing, windowPolicy, cam);
       }
       else {
         HdCyclesCamera::ApplyCameraSettings(_renderParam,
                                             renderPassState->GetWorldToViewMatrix(),
                                             renderPassState->GetProjectionMatrix(),
-                                            renderPassState->GetClipPlanes(),
+                                            framing,
+                                            windowPolicy,
                                             cam);
       }
     }
@@ -154,19 +173,26 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
       // Reset convergence state of all render buffers
       ResetConverged();
 
+      /* Framing pixel space, which the render buffers are in: the full frame runs from the
+       * origin to the data window's far corner, as the camera's raster does, and Cycles renders
+       * the data window of it. */
+      const GfRect2i &dataWindow = framing.dataWindow;
       BufferParams buffer_params;
-      buffer_params.full_x = static_cast<int>(framing.displayWindow.GetMin()[0]);
-      buffer_params.full_y = static_cast<int>(framing.displayWindow.GetMin()[1]);
-      buffer_params.full_width = static_cast<int>(framing.displayWindow.GetSize()[0]);
-      buffer_params.full_height = static_cast<int>(framing.displayWindow.GetSize()[1]);
+      buffer_params.full_x = 0;
+      buffer_params.full_y = 0;
+      buffer_params.full_width = dataWindow.GetMaxX() + 1;
+      buffer_params.full_height = dataWindow.GetMaxY() + 1;
 
-      buffer_params.window_x = framing.dataWindow.GetMinX() - buffer_params.full_x;
-      buffer_params.window_y = framing.dataWindow.GetMinY() - buffer_params.full_y;
-      buffer_params.window_width = framing.dataWindow.GetWidth();
-      buffer_params.window_height = framing.dataWindow.GetHeight();
+      buffer_params.window_x = dataWindow.GetMinX();
+      buffer_params.window_y = dataWindow.GetMinY();
+      buffer_params.window_width = dataWindow.GetWidth();
+      buffer_params.window_height = dataWindow.GetHeight();
 
       buffer_params.width = buffer_params.window_width;
       buffer_params.height = buffer_params.window_height;
+
+      /* Cycles' tiles are placed from the data window's corner. */
+      _renderParam->SetDataWindowOrigin(GfVec2i(dataWindow.GetMinX(), dataWindow.GetMinY()));
 
       session->reset(session->params, buffer_params);
     }

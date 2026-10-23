@@ -176,9 +176,12 @@ void HdCyclesCamera::Finalize(HdRenderParam *renderParam)
   HdCamera::Finalize(renderParam);
 }
 
-void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam, Camera *cam) const
+void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
+                                         const CameraUtilFraming &framing,
+                                         const CameraUtilConformWindowPolicy windowPolicy,
+                                         Camera *cam) const
 {
-  ApplyCameraSettings(renderParam, _data, _windowPolicy, cam);
+  ApplyCameraSettings(renderParam, _data, framing, windowPolicy, cam);
 
   const float metersPerUnit = static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
 
@@ -191,14 +194,21 @@ void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam, Camera *cam
 
 void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
                                          const GfCamera &dataUnconformedWindow,
-                                         CameraUtilConformWindowPolicy windowPolicy,
+                                         const CameraUtilFraming &framing,
+                                         const CameraUtilConformWindowPolicy windowPolicy,
                                          Camera *cam)
 {
-  const float width = cam->get_full_width();
-  const float height = cam->get_full_height();
+  const GfRange2f &display = framing.displayWindow;
+  const GfRect2i &dataWindow = framing.dataWindow;
+  const int width = dataWindow.GetMaxX() + 1;
+  const int height = dataWindow.GetMaxY() + 1;
+  cam->set_full_width(width);
+  cam->set_full_height(height);
 
+  /* The filmback, conformed to the display window, pixel aspect included. */
   auto data = dataUnconformedWindow;
-  CameraUtilConformWindow(&data, windowPolicy, width / height);
+  CameraUtilConformWindow(
+      &data, windowPolicy, display.GetSize()[0] * framing.pixelAspectRatio / display.GetSize()[1]);
 
   if (data.GetProjection() == GfCamera::Orthographic) {
     cam->set_camera_type(CAMERA_ORTHOGRAPHIC);
@@ -209,10 +219,20 @@ void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
 
   const float metersPerUnit = static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
 
-  auto viewplane = data.GetFrustum().GetWindow();
+  /* The conformed window (y up) covers the display window (pixels, y down). The viewplane covers
+   * the raster, from the origin to the data window's far corner, in the same units. */
+  const GfRange2d window = data.GetFrustum().GetWindow();
+  const double unitsPerPixelX = window.GetSize()[0] / display.GetSize()[0];
+  const double unitsPerPixelY = window.GetSize()[1] / display.GetSize()[1];
+  const double left = window.GetMin()[0] - display.GetMin()[0] * unitsPerPixelX;
+  const double top = window.GetMax()[1] + display.GetMin()[1] * unitsPerPixelY;
+  GfRange2d viewplane(GfVec2d(left, top - height * unitsPerPixelY),
+                      GfVec2d(left + width * unitsPerPixelX, top));
   auto focalLength = 1.0f;
   if (data.GetProjection() == GfCamera::Perspective) {
-    viewplane *= 2.0 / viewplane.GetSize()[1];  // Normalize viewplane
+    /* Normalized so the conformed window's height is 2, which the vertical field of view
+     * spans. */
+    viewplane *= 2.0 / window.GetSize()[1];
     focalLength = data.GetFocalLength() * GfCamera::FOCAL_LENGTH_UNIT * metersPerUnit;
 
     cam->set_fov(GfDegreesToRadians(data.GetFieldOfView(GfCamera::FOVVertical)));
@@ -240,13 +260,14 @@ void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
 void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
                                          const GfMatrix4d &worldToViewMatrix,
                                          const GfMatrix4d &projectionMatrix,
-                                         const std::vector<GfVec4d> & /*clipPlanes*/,
+                                         const CameraUtilFraming &framing,
+                                         const CameraUtilConformWindowPolicy windowPolicy,
                                          Camera *cam)
 {
   GfCamera data;
   data.SetFromViewAndProjectionMatrix(worldToViewMatrix, projectionMatrix);
 
-  ApplyCameraSettings(renderParam, data, CameraUtilFit, cam);
+  ApplyCameraSettings(renderParam, data, framing, windowPolicy, cam);
 }
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE
