@@ -953,18 +953,27 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
                     value.GetTypeName().c_str());
       return;
     }
+    HdCyclesShutter next = shutter;
     if (key == _tokens->shutterOpen) {
-      shutter.open = float(cast.UncheckedGet<double>());
+      next.open = float(cast.UncheckedGet<double>());
     }
     else if (key == _tokens->shutterClose) {
-      shutter.close = float(cast.UncheckedGet<double>());
+      next.close = float(cast.UncheckedGet<double>());
     }
     else if (key == _tokens->disableMotionBlur) {
-      shutter.disableMotionBlur = cast.UncheckedGet<bool>();
+      next.disableMotionBlur = cast.UncheckedGet<bool>();
     }
     else {
-      shutter.instantaneous = cast.UncheckedGet<bool>();
+      next.instantaneous = cast.UncheckedGet<bool>();
     }
+    /* husk can resend the same shutter every frame; only a change resamples prims. */
+    if (next.open == shutter.open && next.close == shutter.close &&
+        next.disableMotionBlur == shutter.disableMotionBlur &&
+        next.instantaneous == shutter.instantaneous)
+    {
+      return;
+    }
+    shutter = next;
     ++shutter.version;
     Scene *const scene = _renderParam->session->scene.get();
     const thread_scoped_lock sceneLock(scene->mutex);
