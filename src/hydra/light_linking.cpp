@@ -34,6 +34,15 @@ std::vector<Categories> AssignSets(const std::unordered_map<Object *, VtArray<Tf
                                    const char *kind,
                                    bool &warned)
 {
+  /* Nothing linked of this kind: every object is in set 0. */
+  if (linked.empty()) {
+    for (const auto &[object, categories] : objects) {
+      assign(object, 0u);
+    }
+    warned = false;
+    return std::vector<Categories>(1);
+  }
+
   std::vector<std::pair<Object *, Categories>> keys;
   keys.reserve(objects.size());
   std::set<Categories> distinct;
@@ -109,7 +118,10 @@ void HdCyclesLightLinking::SetObjectCategories(Object *object, VtArray<TfToken> 
     return;
   }
 
+  /* Sorted and unique: a category can arrive from the prim and from its instancers, and
+   * repeats would make objects in the same categories take different sets. */
   std::sort(categories.begin(), categories.end());
+  categories.resize(std::unique(categories.begin(), categories.end()) - categories.begin());
   const auto [it, inserted] = _objects.try_emplace(object);
   if (!inserted && it->second == categories) {
     return;
