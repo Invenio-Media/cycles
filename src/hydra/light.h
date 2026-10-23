@@ -33,6 +33,9 @@ class HdCyclesLight final : public PXR_NS::HdLight {
   CCL_NS::Object *_object = nullptr;
   CCL_NS::Light *_light = nullptr;
   PXR_NS::TfToken _lightType;
+  // A dome's links, which Cycles can't honour; kept to warn once per change.
+  PXR_NS::TfToken _ignoredLightLink;
+  PXR_NS::TfToken _ignoredShadowLink;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

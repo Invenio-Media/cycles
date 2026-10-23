@@ -201,12 +201,17 @@ void HdCyclesLight::Sync(HdSceneDelegate *sceneDelegate,
   if (*dirtyBits & (DirtyBits::DirtyParams | DirtyBits::DirtyCollection)) {
     TfToken lightLink = GetTypedValue<TfToken>(lightDs, HdTokens->lightLink, TfToken());
     TfToken shadowLink = GetTypedValue<TfToken>(lightDs, HdTokens->shadowLink, TfToken());
-    if (_lightType == HdPrimTypeTokens->domeLight &&
-        !(lightLink.IsEmpty() && shadowLink.IsEmpty()))
-    {
-      HDCYCLES_WARN(
-          "Cycles can't link a dome light: light:link and shadow:link on %s are ignored.",
-          id.GetText());
+    if (_lightType == HdPrimTypeTokens->domeLight) {
+      /* Warned once per change of the links, not on every parameter edit. */
+      if ((lightLink != _ignoredLightLink || shadowLink != _ignoredShadowLink) &&
+          !(lightLink.IsEmpty() && shadowLink.IsEmpty()))
+      {
+        HDCYCLES_WARN(
+            "Cycles can't link a dome light: light:link and shadow:link on %s are ignored.",
+            id.GetText());
+      }
+      _ignoredLightLink = lightLink;
+      _ignoredShadowLink = shadowLink;
       lightLink = TfToken();
       shadowLink = TfToken();
     }

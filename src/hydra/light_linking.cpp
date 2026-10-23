@@ -11,7 +11,9 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
@@ -22,15 +24,19 @@ using Categories = std::vector<TfToken>;
 using CategorySet = std::unordered_set<TfToken, TfToken::HashFunctor>;
 
 /* Gives each object the set of the linked categories it is in, and returns each set's
- * categories, sorted, by set index. Set 0 is the objects in none. */
+ * categories, sorted, by set index. Set 0 is the objects in none. The sets are numbered in
+ * the sorted order of their categories, so the numbering, and which combinations are left out
+ * past Cycles' limit, don't depend on the order of the objects. */
 template<typename Assign>
 std::vector<Categories> AssignSets(const std::unordered_map<Object *, VtArray<TfToken>> &objects,
                                    const CategorySet &linked,
                                    const Assign &assign,
+                                   const char *kind,
                                    bool &warned)
 {
-  std::vector<Categories> sets(1);
-  std::map<Categories, uint> index = {{Categories(), 0}};
+  std::vector<std::pair<Object *, Categories>> keys;
+  keys.reserve(objects.size());
+  std::set<Categories> distinct;
   for (const auto &[object, categories] : objects) {
     Categories key;
     for (const TfToken &category : categories) {
@@ -38,27 +44,37 @@ std::vector<Categories> AssignSets(const std::unordered_map<Object *, VtArray<Tf
         key.push_back(category);
       }
     }
-    uint set = 0;
     if (!key.empty()) {
-      auto it = index.find(key);
-      if (it != index.end()) {
-        set = it->second;
-      }
-      else if (sets.size() < LIGHT_LINK_SET_MAX) {
-        set = uint(sets.size());
-        index.emplace(key, set);
-        sets.push_back(std::move(key));
-      }
-      else if (!warned) {
-        warned = true;
-        HDCYCLES_WARN(
-            "Light linking: the scene needs more than %d different combinations of linked "
-            "lights, which is as many as Cycles has; objects beyond them are lit and shadowed "
-            "only by unlinked lights.",
-            int(LIGHT_LINK_SET_MAX));
-      }
+      distinct.insert(key);
     }
-    assign(object, set);
+    keys.emplace_back(object, std::move(key));
+  }
+
+  std::vector<Categories> sets(1);
+  std::map<Categories, uint> index;
+  for (const Categories &key : distinct) {
+    if (sets.size() == LIGHT_LINK_SET_MAX) {
+      break;
+    }
+    index.emplace(key, uint(sets.size()));
+    sets.push_back(key);
+  }
+
+  /* Warned once per time the scene goes past the limit. */
+  const bool overflow = distinct.size() >= LIGHT_LINK_SET_MAX;
+  if (overflow && !warned) {
+    HDCYCLES_WARN(
+        "Light linking: the scene needs %zu different combinations of %s-linked lights, more "
+        "than the %d Cycles has; objects beyond them are reached only by unlinked lights.",
+        distinct.size(),
+        kind,
+        int(LIGHT_LINK_SET_MAX) - 1);
+  }
+  warned = overflow;
+
+  for (const auto &[object, key] : keys) {
+    const auto it = index.find(key);
+    assign(object, it == index.end() ? 0u : it->second);
   }
   return sets;
 }
@@ -83,12 +99,11 @@ uint64_t Membership(const TfToken &category, const std::vector<Categories> &sets
 void HdCyclesLightLinking::SetObjectCategories(Object *object, VtArray<TfToken> categories)
 {
   if (categories.empty()) {
-    /* Objects in no category are in set 0, the default; only those in one are kept. */
+    /* Objects in no category are in set 0, the default; only those in one are kept. One that
+     * leaves its last category stays until Update has put it back in set 0. */
     const auto it = _objects.find(object);
-    if (it != _objects.end()) {
-      _objects.erase(it);
-      object->set_receiver_light_set(0);
-      object->set_blocker_shadow_set(0);
+    if (it != _objects.end() && !it->second.empty()) {
+      it->second = VtArray<TfToken>();
       _dirty = true;
     }
     return;
@@ -105,8 +120,12 @@ void HdCyclesLightLinking::SetObjectCategories(Object *object, VtArray<TfToken> 
 
 void HdCyclesLightLinking::RemoveObject(Object *object)
 {
-  /* The sets the object was in stay until the next change; reaching them does no harm. */
-  _objects.erase(object);
+  /* Renumber when the object was in a category, so its sets don't stay taken. */
+  const auto it = _objects.find(object);
+  if (it != _objects.end()) {
+    _dirty |= !it->second.empty();
+    _objects.erase(it);
+  }
 }
 
 void HdCyclesLightLinking::SetEmitter(Object *object,
@@ -126,7 +145,11 @@ void HdCyclesLightLinking::SetEmitter(Object *object,
 
 void HdCyclesLightLinking::RemoveEmitter(Object *object)
 {
-  _emitters.erase(object);
+  const auto it = _emitters.find(object);
+  if (it != _emitters.end()) {
+    _dirty |= !(it->second.light.IsEmpty() && it->second.shadow.IsEmpty());
+    _emitters.erase(it);
+  }
 }
 
 void HdCyclesLightLinking::Update(Scene *scene)
@@ -162,7 +185,8 @@ void HdCyclesLightLinking::Update(Scene *scene)
         object->set_receiver_light_set(set);
         tag(object);
       },
-      _warnedTooManySets);
+      "light",
+      _warnedLightSets);
   const std::vector<Categories> shadowSets = AssignSets(
       _objects,
       shadowCategories,
@@ -170,7 +194,13 @@ void HdCyclesLightLinking::Update(Scene *scene)
         object->set_blocker_shadow_set(set);
         tag(object);
       },
-      _warnedTooManySets);
+      "shadow",
+      _warnedShadowSets);
+
+  /* Objects that left their last category are back in set 0. */
+  for (auto it = _objects.begin(); it != _objects.end();) {
+    it = it->second.empty() ? _objects.erase(it) : std::next(it);
+  }
 
   for (const auto &[object, links] : _emitters) {
     object->set_light_set_membership(Membership(links.light, lightSets));

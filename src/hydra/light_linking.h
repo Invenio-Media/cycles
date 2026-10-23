@@ -30,7 +30,7 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
  * the objects in none, which only unlinked lights reach. */
 class HdCyclesLightLinking {
  public:
-  /* The categories a receiver and blocker object is in. */
+  /* The categories a receiver and blocker object is in. Remove an object before deleting it. */
   void SetObjectCategories(CCL_NS::Object *object, PXR_NS::VtArray<PXR_NS::TfToken> categories);
   void RemoveObject(CCL_NS::Object *object);
 
@@ -52,7 +52,9 @@ class HdCyclesLightLinking {
   std::unordered_map<CCL_NS::Object *, PXR_NS::VtArray<PXR_NS::TfToken>> _objects;
   std::unordered_map<CCL_NS::Object *, Links> _emitters;
   bool _dirty = false;
-  bool _warnedTooManySets = false;
+  /* Whether the sets went past Cycles' limit at the last update, so each overflow warns once. */
+  bool _warnedLightSets = false;
+  bool _warnedShadowSets = false;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE
