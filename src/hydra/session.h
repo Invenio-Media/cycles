@@ -6,6 +6,7 @@
 #pragma once
 
 #include "hydra/config.h"
+#include "hydra/light_linking.h"
 #include "scene/pass.h"
 #include "scene/scene.h"
 #include "util/thread.h"
@@ -106,6 +107,9 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   // When true, the background is kept transparent even if a dome light (background shader)
   // is present. Controlled by cycles:film:transparent.
   bool filmTransparent = false;
+
+  // Light and shadow linking; lights and geometry report to it as they sync.
+  HdCyclesLightLinking lightLinking;
 
  private:
   const bool _ownCyclesSession;

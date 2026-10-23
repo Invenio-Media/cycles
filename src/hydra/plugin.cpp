@@ -17,6 +17,7 @@
 #include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
 #include <pxr/imaging/hd/tokens.h>
 #include <pxr/imaging/hdsi/implicitSurfaceSceneIndex.h>
+#include <pxr/imaging/hdsi/lightLinkingSceneIndex.h>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -108,6 +109,19 @@ TF_REGISTRY_FUNCTION(HdSceneIndexPlugin)
         return HdsiImplicitSurfaceSceneIndex::New(inputScene, inputArgs);
       },
       inputArgs,
+      0,
+      HdSceneIndexPluginRegistry::InsertionOrderAtStart);
+
+  // UsdLux light:link and shadow:link collections, as categories on lights and geometry
+  // (hydra/light_linking.h), as HdPrman does.
+  HdSceneIndexPluginRegistry::GetInstance().RegisterSceneIndexForRenderer(
+      "Cycles",
+      [](const std::string & /*renderInstanceId*/,
+         const HdSceneIndexBaseRefPtr &inputScene,
+         const HdContainerDataSourceHandle &inputArgs) -> HdSceneIndexBaseRefPtr {
+        return HdsiLightLinkingSceneIndex::New(inputScene, inputArgs);
+      },
+      nullptr,
       0,
       HdSceneIndexPluginRegistry::InsertionOrderAtStart);
 }

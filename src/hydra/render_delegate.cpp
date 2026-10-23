@@ -736,6 +736,7 @@ void HdCyclesDelegate::CommitResources(HdChangeTracker *tracker)
 
   const SceneLock lock(_renderParam.get());
 
+  _renderParam->lightLinking.Update(lock.scene);
   _renderParam->UpdateScene();
 }
 

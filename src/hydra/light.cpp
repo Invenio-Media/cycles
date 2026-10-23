@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/light.h"
+#include "hydra/diagnostic.h"
 #include "hydra/object_settings.h"
 #include "hydra/session.h"
 #include "hydra/util.h"
@@ -45,7 +46,7 @@ HdCyclesLight::~HdCyclesLight() = default;
 
 HdDirtyBits HdCyclesLight::GetInitialDirtyBitsMask() const
 {
-  return DirtyBits::DirtyTransform | DirtyBits::DirtyParams;
+  return DirtyBits::DirtyTransform | DirtyBits::DirtyParams | DirtyBits::DirtyCollection;
 }
 
 void HdCyclesLight::Sync(HdSceneDelegate *sceneDelegate,
@@ -191,6 +192,26 @@ void HdCyclesLight::Sync(HdSceneDelegate *sceneDelegate,
                                           _light->get_shader()->has_surface_spatial_varying))
   {
     PopulateShaderGraph(lightDs);
+  }
+
+  /* The categories of the light:link and shadow:link collections; empty, the light reaches
+   * everything (hydra/light_linking.h). Cycles links a background only where lights are
+   * sampled, not where paths hit it, so a dome's links would apply to half its light; they are
+   * left out instead, as Blender has no world linking. */
+  if (*dirtyBits & (DirtyBits::DirtyParams | DirtyBits::DirtyCollection)) {
+    TfToken lightLink = GetTypedValue<TfToken>(lightDs, HdTokens->lightLink, TfToken());
+    TfToken shadowLink = GetTypedValue<TfToken>(lightDs, HdTokens->shadowLink, TfToken());
+    if (_lightType == HdPrimTypeTokens->domeLight &&
+        !(lightLink.IsEmpty() && shadowLink.IsEmpty()))
+    {
+      HDCYCLES_WARN(
+          "Cycles can't link a dome light: light:link and shadow:link on %s are ignored.",
+          id.GetText());
+      lightLink = TfToken();
+      shadowLink = TfToken();
+    }
+    static_cast<HdCyclesSession *>(renderParam)
+        ->lightLinking.SetEmitter(_object, lightLink, shadowLink);
   }
 
   if (_light->is_modified()) {
@@ -366,6 +387,8 @@ void HdCyclesLight::Finalize(HdRenderParam *renderParam)
   if (_lightType == HdPrimTypeTokens->domeLight) {
     lock.scene->background->set_lightgroup(ustring());
   }
+
+  static_cast<HdCyclesSession *>(renderParam)->lightLinking.RemoveEmitter(_object);
 
   if (!keep_nodes) {
     /* Delete the object before the light, since the object references the light. */

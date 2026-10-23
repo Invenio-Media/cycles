@@ -32,6 +32,7 @@ set(SRC_HD_CYCLES_HEADERS
   geometry.inl
   instancer.h
   light.h
+  light_linking.h
   material.h
   materialx.h
   mesh.h
@@ -55,6 +56,7 @@ set(SRC_HD_CYCLES
   geometry.cpp
   instancer.cpp
   light.cpp
+  light_linking.cpp
   material.cpp
   materialx.cpp
   mesh.cpp

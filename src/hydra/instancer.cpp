@@ -9,6 +9,8 @@
 #include <pxr/base/gf/quatd.h>
 #include <pxr/base/gf/quatf.h>
 #include <pxr/base/gf/quath.h>
+#include <pxr/imaging/hd/categoriesSchema.h>
+#include <pxr/imaging/hd/instanceCategoriesSchema.h>
 #include <pxr/imaging/hd/instancedBySchema.h>
 #include <pxr/imaging/hd/instancerTopologySchema.h>
 #include <pxr/imaging/hd/primvarSchema.h>
@@ -139,9 +141,70 @@ VtMatrix4dArray HdCyclesInstancer::ComputeInstanceTransforms(const SdfPath &prot
   }
 
   /* Recurse into the parent instancer. */
-  VtMatrix4dArray resultTransforms;
+  if (HdCyclesInstancer *const parentInstancer = GetParentInstancer(prim.dataSource)) {
+    VtMatrix4dArray resultTransforms;
+    for (const GfMatrix4d &parentTransform : parentInstancer->ComputeInstanceTransforms(id)) {
+      for (const GfMatrix4d &localTransform : transforms) {
+        resultTransforms.push_back(parentTransform * localTransform);
+      }
+    }
+    return resultTransforms;
+  }
 
-  HdInstancedBySchema instancedBy = HdInstancedBySchema::GetFromParent(prim.dataSource);
+  return transforms;
+}
+
+std::vector<VtArray<TfToken>> HdCyclesInstancer::ComputeInstanceCategories(
+    const SdfPath &prototypeId)
+{
+  HdSceneDelegate *const sceneDelegate = GetDelegate();
+  const SdfPath &id = GetId();
+  const HdSceneIndexPrim prim = GetPrim(sceneDelegate, id);
+
+  HdInstancerTopologySchema topology = HdInstancerTopologySchema::GetFromParent(prim.dataSource);
+  const VtIntArray instanceIndices = topology ?
+                                         topology.ComputeInstanceIndicesForProto(prototypeId) :
+                                         VtIntArray();
+
+  const VtArray<TfToken> own =
+      HdCategoriesSchema::GetFromParent(prim.dataSource).GetIncludedCategoryNames();
+  const HdVectorDataSourceHandle perInstance =
+      HdInstanceCategoriesSchema::GetFromParent(prim.dataSource).GetCategoriesValues();
+
+  std::vector<VtArray<TfToken>> categories;
+  categories.reserve(instanceIndices.size());
+  for (const int index : instanceIndices) {
+    VtArray<TfToken> instance = own;
+    if (perInstance && size_t(index) < perInstance->GetNumElements()) {
+      HdCategoriesSchema schema(HdContainerDataSource::Cast(perInstance->GetElement(index)));
+      for (const TfToken &category : schema.GetIncludedCategoryNames()) {
+        instance.push_back(category);
+      }
+    }
+    categories.push_back(std::move(instance));
+  }
+
+  /* Recurse into the parent instancer, as for the transforms. */
+  if (HdCyclesInstancer *const parentInstancer = GetParentInstancer(prim.dataSource)) {
+    std::vector<VtArray<TfToken>> result;
+    for (const VtArray<TfToken> &parent : parentInstancer->ComputeInstanceCategories(id)) {
+      for (const VtArray<TfToken> &local : categories) {
+        VtArray<TfToken> combined = parent;
+        for (const TfToken &category : local) {
+          combined.push_back(category);
+        }
+        result.push_back(std::move(combined));
+      }
+    }
+    return result;
+  }
+
+  return categories;
+}
+
+HdCyclesInstancer *HdCyclesInstancer::GetParentInstancer(const HdContainerDataSourceHandle &primDs)
+{
+  HdInstancedBySchema instancedBy = HdInstancedBySchema::GetFromParent(primDs);
   SdfPath parentId;
   if (auto pathsDs = instancedBy.GetPaths()) {
     const VtArray<SdfPath> parentPaths = pathsDs->GetTypedValue(0.0f);
@@ -152,21 +215,10 @@ VtMatrix4dArray HdCyclesInstancer::ComputeInstanceTransforms(const SdfPath &prot
   if (parentId.IsEmpty()) {
     parentId = GetParentId();
   }
-
-  if (!parentId.IsEmpty()) {
-    auto *const parentInstancer = static_cast<HdCyclesInstancer *>(
-        sceneDelegate->GetRenderIndex().GetInstancer(parentId));
-    if (parentInstancer) {
-      for (const GfMatrix4d &parentTransform : parentInstancer->ComputeInstanceTransforms(id)) {
-        for (const GfMatrix4d &localTransform : transforms) {
-          resultTransforms.push_back(parentTransform * localTransform);
-        }
-      }
-      return resultTransforms;
-    }
+  if (parentId.IsEmpty()) {
+    return nullptr;
   }
-
-  return transforms;
+  return static_cast<HdCyclesInstancer *>(GetDelegate()->GetRenderIndex().GetInstancer(parentId));
 }
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

@@ -14,6 +14,7 @@
 #include "scene/scene.h"
 #include "util/hash.h"
 
+#include <pxr/imaging/hd/categoriesSchema.h>
 #include <pxr/imaging/hd/materialBindingSchema.h>
 #include <pxr/imaging/hd/materialBindingsSchema.h>
 #include <pxr/imaging/hd/sceneDelegate.h>
@@ -43,7 +44,7 @@ HdDirtyBits HdCyclesGeometry<Base, CyclesBase>::GetInitialDirtyBitsMask() const
 {
   return HdChangeTracker::DirtyPrimID | HdChangeTracker::DirtyTransform |
          HdChangeTracker::DirtyMaterialId | HdChangeTracker::DirtyVisibility |
-         HdChangeTracker::DirtyInstancer;
+         HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyCategories;
 }
 
 template<typename Base, typename CyclesBase>
@@ -142,7 +143,9 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
     const size_t newSize = transforms.size();
 
     // Resize instance list
+    HdCyclesLightLinking &lightLinking = static_cast<HdCyclesSession *>(renderParam)->lightLinking;
     for (size_t i = newSize; i < oldSize; ++i) {
+      lightLinking.RemoveObject(_instances[i]);
       lock.scene->delete_node(_instances[i]);
     }
     _instances.resize(newSize);
@@ -159,6 +162,33 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
       const Transform tfm = transform_scale(make_float3(metersPerUnit)) *
                             convert_transform(_geomTransform * transforms[i]);
       _instances[i]->set_tfm(tfm);
+    }
+  }
+
+  /* Light-linking categories, the prim's and each instance's (hydra/light_linking.h). The
+   * instances are rebuilt when the transforms or the instancer change. */
+  if ((*dirtyBits & HdChangeTracker::DirtyCategories) ||
+      HdChangeTracker::IsTransformDirty(*dirtyBits, id) ||
+      HdChangeTracker::IsInstancerDirty(*dirtyBits, id))
+  {
+    const VtArray<TfToken> own =
+        HdCategoriesSchema::GetFromParent(primDs).GetIncludedCategoryNames();
+    auto *const instancer = static_cast<HdCyclesInstancer *>(
+        sceneDelegate->GetRenderIndex().GetInstancer(Base::GetInstancerId()));
+    const std::vector<VtArray<TfToken>> perInstance = instancer ?
+                                                          instancer->ComputeInstanceCategories(
+                                                              id) :
+                                                          std::vector<VtArray<TfToken>>();
+
+    HdCyclesLightLinking &lightLinking = static_cast<HdCyclesSession *>(renderParam)->lightLinking;
+    for (size_t i = 0; i < _instances.size(); ++i) {
+      VtArray<TfToken> categories = own;
+      if (i < perInstance.size()) {
+        for (const TfToken &category : perInstance[i]) {
+          categories.push_back(category);
+        }
+      }
+      lightLinking.SetObjectCategories(_instances[i], std::move(categories));
     }
   }
 
@@ -202,6 +232,10 @@ void HdCyclesGeometry<Base, CyclesBase>::Finalize(HdRenderParam *renderParam)
   const bool keep_nodes = static_cast<const HdCyclesSession *>(renderParam)->keep_nodes;
 
   /* Delete the instances before the geometry, since the objects reference the geometry. */
+  HdCyclesLightLinking &lightLinking = static_cast<HdCyclesSession *>(renderParam)->lightLinking;
+  for (Object *instance : _instances) {
+    lightLinking.RemoveObject(instance);
+  }
   if (!keep_nodes) {
     lock.scene->delete_nodes(set<Object *>(_instances.begin(), _instances.end()));
   }
