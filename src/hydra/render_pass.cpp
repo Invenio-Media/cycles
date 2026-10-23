@@ -133,7 +133,8 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
         /* husk sends the product's framing as render settings, with render buffers the size of
          * the data window: the data window is at the origin and the display window, the
          * resolution, is offset from it. The data window holds the pixels whose centres are in
-         * dataWindowNDC, which has y up. */
+         * dataWindowNDC, which has y up. Its corner comes from dataWindowNDC and its size from
+         * the buffers husk allocated, which are what the tiles must fill. */
         const GfVec4f &ndc = product.dataWindowNDC;
         const GfVec2f resolution(product.resolution[0], product.resolution[1]);
         const GfVec2f corner(std::ceil(ndc[0] * resolution[0] - 0.5f),

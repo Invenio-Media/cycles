@@ -931,8 +931,8 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
       framing.pixelAspectRatio = value.UncheckedGet<float>();
     }
     else if (key == _tokens->aspectRatioConformPolicy && value.IsHolding<TfToken>()) {
-      /* UsdRender's policies, as CameraUtil's. adjustPixelAspectRatio leaves the aperture as it
-       * is, without changing the pixel aspect. */
+      /* UsdRender's policies, as CameraUtil's. adjustPixelAspectRatio maps the aperture onto
+       * the display window as it is, so the pixels take whatever aspect that gives. */
       const TfToken &policy = value.UncheckedGet<TfToken>();
       framing.windowPolicy = policy == _tokens->cropAperture        ? CameraUtilCrop :
                              policy == _tokens->adjustApertureWidth ? CameraUtilMatchVertically :
@@ -940,6 +940,15 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
                                                                       CameraUtilMatchHorizontally :
                              policy == _tokens->adjustPixelAspectRatio ? CameraUtilDontConform :
                                                                          CameraUtilFit;
+    }
+    else if (key == _tokens->resolution || key == _tokens->dataWindowNDC ||
+             key == _tokens->pixelAspectRatio || key == _tokens->aspectRatioConformPolicy)
+    {
+      /* UsdRender types: int2, float4, float and token. */
+      HDCYCLES_WARN("Render setting %s has an unexpected type, %s; ignored.",
+                    key.GetText(),
+                    value.GetTypeName().c_str());
+      return;
     }
     else {
       framingKey = false;

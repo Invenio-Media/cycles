@@ -150,7 +150,8 @@ void HdCyclesFileReader::read(Session *session, const char *filepath, const bool
         HdSprim *sprim = render_index->GetSprim(HdPrimTypeTokens->camera, prim.GetPath());
         if (sprim) {
           HdCyclesCamera *camera = dynamic_cast<HdCyclesCamera *>(sprim);
-          /* The camera's own resolution is both the display and the data window. */
+          /* The camera's own resolution, set by the caller, is both the display and the data
+           * window; ApplyCameraSettings sets it again from the framing. */
           Camera *const cam = session->scene->camera;
           camera->ApplyCameraSettings(
               render_delegate.GetRenderParam(),
