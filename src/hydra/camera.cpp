@@ -76,12 +76,15 @@ void HdCyclesCamera::Sync(HdSceneDelegate *sceneDelegate,
     if (auto matrixDs = HdXformSchema::GetFromParent(primDs).GetMatrix()) {
       _transform = matrixDs->GetTypedValue(0.0f);
       _data.SetTransform(_transform);
-      for (const float time : MotionSampleTimes(matrixDs,
-                                                shutter.open,
-                                                shutter.IsOpen() ? shutter.close : shutter.open,
-                                                kCameraMotionSteps))
-      {
-        _motionTransforms.push_back(matrixDs->GetTypedValue(time));
+      const std::vector<float> times = MotionSampleTimes(matrixDs,
+                                                         shutter.open,
+                                                         shutter.IsOpen() ? shutter.close :
+                                                                            shutter.open,
+                                                         kCameraMotionSteps);
+      if (times.size() > 1) {
+        for (const float time : times) {
+          _motionTransforms.push_back(matrixDs->GetTypedValue(time));
+        }
       }
     }
   }

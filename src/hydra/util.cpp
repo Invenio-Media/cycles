@@ -175,7 +175,9 @@ std::vector<float> MotionSampleTimes(const HdSampledDataSourceHandle &ds,
   }
   std::vector<float> times(steps);
   for (int i = 0; i < steps; ++i) {
-    times[i] = shutterOpen + (shutterClose - shutterOpen) * float(i) / float(steps - 1);
+    times[i] = i == steps - 1 ?
+                   shutterClose :
+                   shutterOpen + (shutterClose - shutterOpen) * float(i) / float(steps - 1);
   }
   return times;
 }

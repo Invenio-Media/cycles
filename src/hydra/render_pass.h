@@ -10,6 +10,7 @@
 #include <pxr/imaging/hd/renderPass.h>
 
 #include <memory>
+#include <optional>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
@@ -35,6 +36,8 @@ class HdCyclesRenderPass final : public PXR_NS::HdRenderPass {
   // Shared counter; destructor decrements without needing a delegate backpointer.
   std::shared_ptr<int> _passCount;
   unsigned int _lastSettingsVersion = 0;
+  // The shutter version the prims sampled their motion with; unset until the first pass.
+  std::optional<unsigned int> _shutterVersion;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

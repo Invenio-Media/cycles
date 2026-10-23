@@ -66,7 +66,8 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
 namespace {
 
 /* Motion blur is on while the shutter is open; Cycles samples ray times only when the camera's
- * shutter time is positive. Call with the scene locked. */
+ * shutter time is positive. Nothing else sets the integrator's motion_blur, which isn't an
+ * exposed setting (kIntegratorExcluded). Call with the scene locked. */
 void ApplyShutter(Scene *scene, const HdCyclesShutter &shutter)
 {
   scene->integrator->set_motion_blur(shutter.IsOpen());
@@ -944,18 +945,27 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
       key == _tokens->disableMotionBlur || key == _tokens->instantaneousShutter)
   {
     HdCyclesShutter &shutter = _renderParam->shutter;
+    const bool flag = key == _tokens->disableMotionBlur || key == _tokens->instantaneousShutter;
+    const VtValue cast = flag ? VtValue::Cast<bool>(value) : VtValue::Cast<double>(value);
+    if (cast.IsEmpty()) {
+      HDCYCLES_WARN("Render setting %s has an unexpected type, %s; ignored.",
+                    key.GetText(),
+                    value.GetTypeName().c_str());
+      return;
+    }
     if (key == _tokens->shutterOpen) {
-      shutter.open = float(VtValue::Cast<double>(value).GetWithDefault(0.0));
+      shutter.open = float(cast.UncheckedGet<double>());
     }
     else if (key == _tokens->shutterClose) {
-      shutter.close = float(VtValue::Cast<double>(value).GetWithDefault(0.0));
+      shutter.close = float(cast.UncheckedGet<double>());
     }
     else if (key == _tokens->disableMotionBlur) {
-      shutter.disableMotionBlur = VtValue::Cast<bool>(value).GetWithDefault(false);
+      shutter.disableMotionBlur = cast.UncheckedGet<bool>();
     }
     else {
-      shutter.instantaneous = VtValue::Cast<bool>(value).GetWithDefault(false);
+      shutter.instantaneous = cast.UncheckedGet<bool>();
     }
+    ++shutter.version;
     Scene *const scene = _renderParam->session->scene.get();
     const thread_scoped_lock sceneLock(scene->mutex);
     ApplyShutter(scene, shutter);

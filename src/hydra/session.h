@@ -64,6 +64,8 @@ struct HdCyclesShutter {
   float close = 0.0f;
   bool disableMotionBlur = false;
   bool instantaneous = false;
+  // Bumped on every change, so the render pass can resample prims that synced before it.
+  unsigned int version = 0;
 
   bool IsOpen() const
   {

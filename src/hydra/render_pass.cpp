@@ -93,6 +93,19 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
     return;  // Something went wrong and cannot continue without recreating the session
   }
 
+  /* Prims sample their motion across the shutter when they sync. husk sends the shutter before
+   * the first sync; one that changes after it resamples every prim, and the render camera, on
+   * the next sync. */
+  const unsigned int shutterVersion = _renderParam->shutter.version;
+  if (_shutterVersion && *_shutterVersion != shutterVersion) {
+    HdChangeTracker &tracker = GetRenderIndex()->GetChangeTracker();
+    tracker.MarkAllRprimsDirty(HdChangeTracker::DirtyTransform);
+    if (const HdCamera *const camera = renderPassState->GetCamera()) {
+      tracker.MarkSprimDirty(camera->GetId(), HdCamera::DirtyTransform);
+    }
+  }
+  _shutterVersion = shutterVersion;
+
   if (scene->mutex.try_lock()) {
     auto *const renderDelegate = static_cast<HdCyclesDelegate *>(
         GetRenderIndex()->GetRenderDelegate());
