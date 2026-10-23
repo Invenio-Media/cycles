@@ -111,15 +111,43 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
     _instances[0]->set_pass_id(Base::GetPrimId() + 1);
   }
 
-  if (HdChangeTracker::IsTransformDirty(*dirtyBits, id)) {
+  /* The transform at the frame, and at evenly spaced times across the shutter for motion blur.
+   * primvars:cycles:object:motion_blur (on by default) and motion_steps (3 by default; odd, as
+   * Cycles centres the samples) set how many; changing either resamples. */
+  const HdCyclesShutter &shutter = static_cast<HdCyclesSession *>(renderParam)->shutter;
+  int motionSteps = 1;
+  if (shutter.IsOpen()) {
+    static const TfToken motionBlurToken("cycles:object:motion_blur");
+    static const TfToken motionStepsToken("cycles:object:motion_steps");
+    const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(primDs);
+    if (HdCyclesSettingValue<bool>(ReadPrimvar(primvars, motionBlurToken), true)) {
+      motionSteps = std::clamp(
+                        HdCyclesSettingValue<int>(ReadPrimvar(primvars, motionStepsToken), 3),
+                        1,
+                        int(Object::MAX_MOTION_STEPS)) |
+                    1;
+    }
+  }
+  const bool motionChanged = motionSteps != _motionSteps;
+  _motionSteps = motionSteps;
+
+  if (HdChangeTracker::IsTransformDirty(*dirtyBits, id) || motionChanged) {
     _geomTransform = GfMatrix4d(1.0);
+    _geomMotion.clear();
     if (auto matrixDs = HdXformSchema::GetFromParent(primDs).GetMatrix()) {
       _geomTransform = matrixDs->GetTypedValue(0.0f);
+      const std::vector<float> times = MotionSampleTimes(
+          matrixDs, shutter.open, shutter.close, motionSteps);
+      if (times.size() > 1) {
+        for (const float time : times) {
+          _geomMotion.push_back(matrixDs->GetTypedValue(time));
+        }
+      }
     }
   }
 
   if (HdChangeTracker::IsTransformDirty(*dirtyBits, id) ||
-      HdChangeTracker::IsInstancerDirty(*dirtyBits, id))
+      HdChangeTracker::IsInstancerDirty(*dirtyBits, id) || motionChanged)
   {
     auto *const instancer = static_cast<HdCyclesInstancer *>(
         sceneDelegate->GetRenderIndex().GetInstancer(Base::GetInstancerId()));
@@ -154,14 +182,18 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
       InitializeInstance(static_cast<int>(i));
     }
 
-    // Update transforms of all instances
+    // Update transforms of all instances, with their motion across the shutter.
+    const float metersPerUnit =
+        static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
+    const Transform scale = transform_scale(make_float3(metersPerUnit));
     for (size_t i = 0; i < transforms.size(); ++i) {
-      const float metersPerUnit =
-          static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
+      _instances[i]->set_tfm(scale * convert_transform(_geomTransform * transforms[i]));
 
-      const Transform tfm = transform_scale(make_float3(metersPerUnit)) *
-                            convert_transform(_geomTransform * transforms[i]);
-      _instances[i]->set_tfm(tfm);
+      array<Transform> motion(_geomMotion.size());
+      for (size_t step = 0; step < _geomMotion.size(); ++step) {
+        motion[step] = scale * convert_transform(_geomMotion[step] * transforms[i]);
+      }
+      _instances[i]->set_motion(motion);
     }
   }
 

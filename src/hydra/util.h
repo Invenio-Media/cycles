@@ -60,32 +60,14 @@ T GetTypedValue(const PXR_NS::HdContainerDataSourceHandle &container,
   return fallback;
 }
 
-/* Sample a typed data source over the shutter into `out`. */
-template<typename T, unsigned int Capacity>
-void SampleTyped(const typename PXR_NS::HdTypedSampledDataSource<T>::Handle &ds,
-                 float shutterOpen,
-                 float shutterClose,
-                 PXR_NS::HdTimeSampleArray<T, Capacity> *out)
-{
-  if (!ds) {
-    out->Resize(0);
-    return;
-  }
-  std::vector<float> times;
-  const bool hasSamples = ds->GetContributingSampleTimesForInterval(
-      shutterOpen, shutterClose, &times);
-  if (!hasSamples || times.empty()) {
-    out->Resize(1);
-    out->times[0] = 0.0f;
-    out->values[0] = ds->GetTypedValue(0.0f);
-    return;
-  }
-  out->Resize(times.size());
-  for (size_t i = 0; i < times.size(); ++i) {
-    out->times[i] = times[i];
-    out->values[i] = ds->GetTypedValue(times[i]);
-  }
-}
+/* The times to sample a data source at for motion blur, in frames from the current frame:
+ * `steps` times spread evenly across the shutter, as Cycles spreads a ray's time evenly across a
+ * motion array; or only 0 when the shutter is closed, there is one step, or the data source
+ * doesn't change across the shutter. */
+std::vector<float> MotionSampleTimes(const PXR_NS::HdSampledDataSourceHandle &ds,
+                                     float shutterOpen,
+                                     float shutterClose,
+                                     int steps);
 
 /* Read a primvar's value at shutter offset 0. */
 PXR_NS::VtValue ReadPrimvar(const PXR_NS::HdPrimvarsSchema &primvars, const PXR_NS::TfToken &name);

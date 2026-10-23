@@ -19,6 +19,7 @@
 #include "hydra/render_pass.h"
 #include "hydra/session.h"
 #include "hydra/volume.h"
+#include "scene/camera.h"
 #include "scene/film.h"
 #include "scene/integrator.h"
 #include "scene/light.h"
@@ -54,10 +55,23 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     (adjustApertureWidth)
     (adjustApertureHeight)
     (adjustPixelAspectRatio)
+    // The render camera's shutter, which husk sends as render settings.
+    ((shutterOpen, "shutter:open"))
+    ((shutterClose, "shutter:close"))
+    (disableMotionBlur)
+    (instantaneousShutter)
 );
 // clang-format on
 
 namespace {
+
+/* Motion blur is on while the shutter is open; Cycles samples ray times only when the camera's
+ * shutter time is positive. Call with the scene locked. */
+void ApplyShutter(Scene *scene, const HdCyclesShutter &shutter)
+{
+  scene->integrator->set_motion_blur(shutter.IsOpen());
+  scene->camera->set_shuttertime(shutter.IsOpen() ? shutter.close - shutter.open : 1.0f);
+}
 
 const TfTokenVector kSupportedRPrimTypes = {
     HdPrimTypeTokens->basisCurves,
@@ -516,6 +530,14 @@ void HdCyclesDelegate::RebuildSession()
   auto newSession = std::make_unique<HdCyclesSession>(br.first, sceneParams);
   newSession->SetStageMetersPerUnit(stageMetersPerUnit);
   newSession->filmTransparent = _filmTransparent;
+  // husk's framing and shutter, which aren't in _appliedSettings.
+  newSession->productFraming = _renderParam->productFraming;
+  newSession->shutter = _renderParam->shutter;
+  {
+    Scene *const scene = newSession->session->scene.get();
+    const thread_scoped_lock sceneLock(scene->mutex);
+    ApplyShutter(scene, newSession->shutter);
+  }
 
   _renderParam = std::move(newSession);
 
@@ -916,6 +938,31 @@ HdRenderSettingDescriptorList HdCyclesDelegate::GetRenderSettingDescriptors() co
 
 void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS::VtValue &value)
 {
+  /* The render camera's shutter: geometry and the camera sample their motion across it when
+   * they sync, which is after the settings husk sends. */
+  if (key == _tokens->shutterOpen || key == _tokens->shutterClose ||
+      key == _tokens->disableMotionBlur || key == _tokens->instantaneousShutter)
+  {
+    HdCyclesShutter &shutter = _renderParam->shutter;
+    if (key == _tokens->shutterOpen) {
+      shutter.open = float(VtValue::Cast<double>(value).GetWithDefault(0.0));
+    }
+    else if (key == _tokens->shutterClose) {
+      shutter.close = float(VtValue::Cast<double>(value).GetWithDefault(0.0));
+    }
+    else if (key == _tokens->disableMotionBlur) {
+      shutter.disableMotionBlur = VtValue::Cast<bool>(value).GetWithDefault(false);
+    }
+    else {
+      shutter.instantaneous = VtValue::Cast<bool>(value).GetWithDefault(false);
+    }
+    Scene *const scene = _renderParam->session->scene.get();
+    const thread_scoped_lock sceneLock(scene->mutex);
+    ApplyShutter(scene, shutter);
+    ++_settingsVersion;
+    return;
+  }
+
   /* The render product's framing, which husk sends instead of a render-pass framing. The render
    * pass frames from it (HdCyclesRenderPass::_Execute). */
   {

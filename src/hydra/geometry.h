@@ -42,6 +42,10 @@ template<typename Base, typename CyclesBase> class HdCyclesGeometry : public Bas
   void InitializeInstance(const int index);
 
   PXR_NS::GfMatrix4d _geomTransform;
+  // The transform at evenly spaced times across the shutter; empty when it doesn't move.
+  std::vector<PXR_NS::GfMatrix4d> _geomMotion;
+  // The motion steps the transform was sampled with; 1 when it wasn't.
+  int _motionSteps = 1;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

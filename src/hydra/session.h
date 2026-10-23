@@ -57,6 +57,20 @@ struct HdCyclesProductFraming {
   PXR_NS::CameraUtilConformWindowPolicy windowPolicy = PXR_NS::CameraUtilFit;
 };
 
+// The render camera's shutter, as husk sends it: frames from the current frame. Motion blur is
+// on when the shutter is open for a time, unless disableMotionBlur or instantaneousShutter.
+struct HdCyclesShutter {
+  float open = 0.0f;
+  float close = 0.0f;
+  bool disableMotionBlur = false;
+  bool instantaneous = false;
+
+  bool IsOpen() const
+  {
+    return !disableMotionBlur && !instantaneous && close > open;
+  }
+};
+
 class HdCyclesSession final : public PXR_NS::HdRenderParam {
  public:
   HdCyclesSession(CCL_NS::Session *session_, const bool keep_nodes);
@@ -140,6 +154,9 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
 
   // Set by husk; the render pass frames from it when it has no framing of its own.
   HdCyclesProductFraming productFraming;
+
+  // Set by husk; geometry and the camera sample their motion across it.
+  HdCyclesShutter shutter;
 
  private:
   const bool _ownCyclesSession;
