@@ -126,20 +126,25 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
       framing = CameraUtilFraming(GfRect2i(GfVec2i(0), int(vp[2]), int(vp[3])));
     }
 
-    scene->camera->set_full_width(framing.dataWindow.GetWidth());
-    scene->camera->set_full_height(framing.dataWindow.GetHeight());
+    /* The dicing camera is the render camera, as in Blender: adaptive subdivision measures its
+     * dicing rate in pixels as this camera sees them. Cycles re-dices only when a mesh changes,
+     * so a moving camera doesn't re-dice. */
+    for (Camera *const cam : {scene->camera, scene->dicing_camera}) {
+      cam->set_full_width(framing.dataWindow.GetWidth());
+      cam->set_full_height(framing.dataWindow.GetHeight());
 
-    if (const auto *const camera = static_cast<const HdCyclesCamera *>(
-            renderPassState->GetCamera()))
-    {
-      camera->ApplyCameraSettings(_renderParam, scene->camera);
-    }
-    else {
-      HdCyclesCamera::ApplyCameraSettings(_renderParam,
-                                          renderPassState->GetWorldToViewMatrix(),
-                                          renderPassState->GetProjectionMatrix(),
-                                          renderPassState->GetClipPlanes(),
-                                          scene->camera);
+      if (const auto *const camera = static_cast<const HdCyclesCamera *>(
+              renderPassState->GetCamera()))
+      {
+        camera->ApplyCameraSettings(_renderParam, cam);
+      }
+      else {
+        HdCyclesCamera::ApplyCameraSettings(_renderParam,
+                                            renderPassState->GetWorldToViewMatrix(),
+                                            renderPassState->GetProjectionMatrix(),
+                                            renderPassState->GetClipPlanes(),
+                                            cam);
+      }
     }
 
     // Reset session if the session, scene, camera or AOV bindings changed

@@ -36,11 +36,21 @@ class HdCyclesMesh final : public HdCyclesGeometry<PXR_NS::HdMesh, CCL_NS::Mesh>
 
   void PopulateTopology(PXR_NS::HdSceneDelegate *sceneDelegate);
 
+  // Reads primvars:cycles:object:subdivision:*; returns whether max_level changed.
+  bool ReadSubdivisionSettings(PXR_NS::HdSceneDelegate *sceneDelegate);
+  // Sets the Cycles mesh's dicing parameters from them.
+  void ApplySubdivisionSettings();
+
   PXR_NS::HdMeshUtil _util;
   PXR_NS::HdMeshTopology _topology;
   PXR_NS::VtIntArray _primitiveParams;
   // The display style's flat shading, kept for PopulateNormals, which sets the smooth flags.
   bool _flatShading = false;
+  // The subdivision settings: an authored max_level replaces the display style's refine
+  // level (-1 when unauthored); the dicing rate is in pixels, or object units in object space.
+  int _subdMaxLevel = -1;
+  float _subdDicingRate = 1.0f;
+  bool _subdObjectSpace = false;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

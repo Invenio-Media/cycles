@@ -6,8 +6,11 @@
 #include "hydra/mesh.h"
 #include "hydra/diagnostic.h"
 #include "hydra/geometry.inl"
+#include "hydra/object_settings.h"
 #include "hydra/util.h"
 #include "scene/mesh.h"
+
+#include <algorithm>
 
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/imaging/hd/geomSubsetSchema.h>
@@ -20,6 +23,14 @@
 #include <pxr/imaging/hd/subdivisionTagsSchema.h>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
+
+// clang-format off
+TF_DEFINE_PRIVATE_TOKENS(_tokens,
+    ((maxLevel, "cycles:object:subdivision:max_level"))
+    ((dicingRate, "cycles:object:subdivision:dicing_rate"))
+    ((adaptiveSpace, "cycles:object:subdivision:adaptive_space"))
+);
+// clang-format on
 
 namespace {
 
@@ -135,6 +146,15 @@ HdDirtyBits HdCyclesMesh::_PropagateDirtyBits(HdDirtyBits bits) const
 
 void HdCyclesMesh::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyBits, bool &rebuild)
 {
+  /* The subdivision settings. A new max_level can switch subdivision on or off, which takes a
+   * new topology, and with it everything populated from it. */
+  const bool settingsDirty = HdChangeTracker::IsTopologyDirty(dirtyBits, GetId()) ||
+                             (dirtyBits & HdChangeTracker::DirtyPrimvar);
+  if (settingsDirty && ReadSubdivisionSettings(sceneDelegate)) {
+    dirtyBits |= HdChangeTracker::DirtyTopology | HdChangeTracker::DirtyPoints |
+                 HdChangeTracker::DirtyNormals | HdChangeTracker::DirtyPrimvar;
+  }
+
   if (HdChangeTracker::IsTopologyDirty(dirtyBits, GetId())) {
     PopulateTopology(sceneDelegate);
   }
@@ -151,6 +171,10 @@ void HdCyclesMesh::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyBit
   // Must happen after topology update, so that appropriate attribute set can be selected
   if (dirtyBits & HdChangeTracker::DirtyPrimvar) {
     PopulatePrimvars(sceneDelegate);
+  }
+
+  if (settingsDirty) {
+    ApplySubdivisionSettings();
   }
 
   rebuild = (_geom->triangles_is_modified()) || (_geom->subd_start_corner_is_modified()) ||
@@ -355,6 +379,9 @@ void HdCyclesMesh::PopulateTopology(HdSceneDelegate *sceneDelegate)
   int refineLevel = 0;
   if (auto ds = displayStyleSchema.GetRefineLevel()) {
     refineLevel = ds->GetTypedValue(0.0f);
+  }
+  if (_subdMaxLevel >= 0) {
+    refineLevel = _subdMaxLevel;
   }
   bool flatShadingEnabled = false;
   if (auto ds = displayStyleSchema.GetFlatShadingEnabled()) {
@@ -611,11 +638,41 @@ void HdCyclesMesh::PopulateTopology(HdSceneDelegate *sceneDelegate)
         _geom->add_vertex_crease(cornerIndices[i], cornerWeights[i]);
       }
     }
-
-    _geom->set_subd_dicing_rate(1.0f);
-    _geom->set_subd_max_level(_topology.GetRefineLevel());
-    _geom->set_subd_objecttoworld(_instances[0]->get_tfm());
   }
+}
+
+bool HdCyclesMesh::ReadSubdivisionSettings(HdSceneDelegate *sceneDelegate)
+{
+  const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(
+      GetPrim(sceneDelegate, GetId()).dataSource);
+
+  const VtValue maxLevel = ReadPrimvar(primvars, _tokens->maxLevel);
+  const int level = maxLevel.IsEmpty() ? -1 : std::max(HdCyclesSettingValue<int>(maxLevel, 0), 0);
+  /* Blender's smallest dicing rate; smaller ones tessellate without bound. */
+  _subdDicingRate = std::max(
+      HdCyclesSettingValue<float>(ReadPrimvar(primvars, _tokens->dicingRate), 1.0f), 0.1f);
+  const VtValue space = ReadPrimvar(primvars, _tokens->adaptiveSpace);
+  _subdObjectSpace = (space.IsHolding<TfToken>() ?
+                          space.UncheckedGet<TfToken>().GetString() :
+                          HdCyclesSettingValue<std::string>(space, "")) == "object";
+
+  const bool changed = level != _subdMaxLevel;
+  _subdMaxLevel = level;
+  return changed;
+}
+
+void HdCyclesMesh::ApplySubdivisionSettings()
+{
+  if (_geom->get_subdivision_type() == Mesh::SUBDIVISION_NONE) {
+    return;
+  }
+  /* Pixel-space dicing measures edges from the dicing camera, which follows the render
+   * camera (HdCyclesRenderPass). Cycles re-dices when these change. */
+  _geom->set_subd_dicing_rate(_subdDicingRate);
+  _geom->set_subd_max_level(_topology.GetRefineLevel());
+  _geom->set_subd_adaptive_space(_subdObjectSpace ? Mesh::SUBDIVISION_ADAPTIVE_SPACE_OBJECT :
+                                                    Mesh::SUBDIVISION_ADAPTIVE_SPACE_PIXEL);
+  _geom->set_subd_objecttoworld(_instances[0]->get_tfm());
 }
 
 void HdCyclesMesh::Finalize(PXR_NS::HdRenderParam *renderParam)
