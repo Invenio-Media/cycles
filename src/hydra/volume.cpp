@@ -19,6 +19,8 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
 // clang-format off
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
    (openvdbAsset)
+   ((stepSize, "cycles:object:volume:step_size"))
+   ((space, "cycles:object:volume:space"))
 );
 // clang-format on
 
@@ -77,6 +79,23 @@ void HdCyclesVolume::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyB
     }
   }
   _geom->set_velocity_scale(velocityScale);
+
+  /* Ray marching's step, and the space it and the density are in, as Blender's volume Step
+   * Size and Space: 0 steps by the voxel size. In world space the step is in stage units (the
+   * scene is in metres here) and the density per world unit, as in Karma; in object space both
+   * are per object unit, so the volume looks the same at any scale. */
+  {
+    const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(
+        GetPrim(sceneDelegate, GetId()).dataSource);
+    const VtValue space = ReadPrimvar(primvars, _tokens->space);
+    const bool objectSpace = (space.IsHolding<TfToken>() ?
+                                  space.UncheckedGet<TfToken>().GetString() :
+                                  HdCyclesSettingValue<std::string>(space, "")) == "object";
+    const float stepSize = std::max(
+        HdCyclesSettingValue<float>(ReadPrimvar(primvars, _tokens->stepSize), 0.0f), 0.0f);
+    _geom->set_object_space(objectSpace);
+    _geom->set_step_size(objectSpace ? stepSize : stepSize * _metersPerUnit);
+  }
 
   if (dirtyBits & HdChangeTracker::DirtyVolumeField) {
     const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());

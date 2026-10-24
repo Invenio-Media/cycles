@@ -139,6 +139,7 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
   _motionSteps = motionSteps;
   _shutterOpen = shutter.IsOpen() ? shutter.open : 0.0f;
   _shutterClose = shutter.IsOpen() ? shutter.close : 0.0f;
+  _metersPerUnit = static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
   /* Deforming points sample across the shutter with the same steps. */
   if (motionChanged) {
     *dirtyBits |= HdChangeTracker::DirtyPoints;

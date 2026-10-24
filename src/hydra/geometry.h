@@ -63,6 +63,8 @@ template<typename Base, typename CyclesBase> class HdCyclesGeometry : public Bas
   int _motionSteps = 1;
   // Set when the motion steps of the geometry changed, so the BVH is rebuilt.
   bool _motionRebuild = false;
+  // The stage's metres per unit, which the delegate scales the scene by, as of this sync.
+  float _metersPerUnit = 1.0f;
 
  private:
   void Initialize(PXR_NS::HdRenderParam *renderParam);
