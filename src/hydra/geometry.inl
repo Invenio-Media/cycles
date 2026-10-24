@@ -352,8 +352,12 @@ template<typename Base, typename CyclesBase>
 void HdCyclesGeometry<Base, CyclesBase>::ApplyPointsMotion(
     Attribute *attr_P, const std::vector<VtVec3fArray> &samples, const size_t count)
 {
+  if (!attr_P) {
+    return;
+  }
   const int oldSteps = attr_P->num_motion_steps();
-  const bool moves = samples.size() > 1 &&
+  /* The motion steps are odd (Sync), so the middle sample, the position, is Cycles' centre. */
+  const bool moves = samples.size() > 1 && TF_VERIFY(samples.size() % 2 == 1) &&
                      std::all_of(samples.begin(), samples.end(), [count](const VtVec3fArray &s) {
                        return s.size() >= count;
                      });
