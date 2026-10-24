@@ -18,6 +18,7 @@
 #include <pxr/imaging/hd/tokens.h>
 #include <pxr/imaging/hdsi/implicitSurfaceSceneIndex.h>
 #include <pxr/imaging/hdsi/lightLinkingSceneIndex.h>
+#include <pxr/imaging/hdsi/velocityMotionResolvingSceneIndex.h>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -120,6 +121,20 @@ TF_REGISTRY_FUNCTION(HdSceneIndexPlugin)
          const HdSceneIndexBaseRefPtr &inputScene,
          const HdContainerDataSourceHandle &inputArgs) -> HdSceneIndexBaseRefPtr {
         return HdsiLightLinkingSceneIndex::New(inputScene, inputArgs);
+      },
+      nullptr,
+      0,
+      HdSceneIndexPluginRegistry::InsertionOrderAtStart);
+
+  // UsdGeom velocities and accelerations, as points that change over time, so deformation
+  // motion blur samples them like time-sampled points (HdCyclesGeometry::SamplePoints). It
+  // takes the stage's time codes per second from the scene globals.
+  HdSceneIndexPluginRegistry::GetInstance().RegisterSceneIndexForRenderer(
+      "Cycles",
+      [](const std::string & /*renderInstanceId*/,
+         const HdSceneIndexBaseRefPtr &inputScene,
+         const HdContainerDataSourceHandle &inputArgs) -> HdSceneIndexBaseRefPtr {
+        return HdsiVelocityMotionResolvingSceneIndex::New(inputScene, inputArgs);
       },
       nullptr,
       0,

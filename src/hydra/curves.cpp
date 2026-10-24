@@ -63,22 +63,24 @@ void HdCyclesCurves::PopulatePoints(HdSceneDelegate *sceneDelegate)
 {
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
   const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
-  const VtValue value = ReadPrimvar(primvars, HdTokens->points);
-
-  if (!value.IsHolding<VtVec3fArray>()) {
+  /* Across the shutter when the points move; the middle sample is the position. */
+  const std::vector<VtVec3fArray> samples = SamplePoints(primvars);
+  if (samples.empty()) {
     HDCYCLES_WARN("Invalid points data for %s", GetId().GetText());
     return;
   }
 
-  const auto &points = value.UncheckedGet<VtVec3fArray>();
+  const VtVec3fArray &points = samples[samples.size() / 2];
 
   TF_VERIFY(points.size() >= _geom->num_keys());
 
   static_assert(sizeof(GfVec3f) == sizeof(packed_float3));
 
+  const size_t numKeys = std::min(points.size(), _geom->num_keys());
   std::copy_n(reinterpret_cast<const packed_float3 *>(points.data()),
-              std::min(points.size(), _geom->num_keys()),
+              numKeys,
               _geom->get_position_for_write());
+  ApplyPointsMotion(_geom->attributes.find(ATTR_STD_POSITION), samples, numKeys);
 }
 
 void HdCyclesCurves::PopulateWidths(HdSceneDelegate *sceneDelegate)

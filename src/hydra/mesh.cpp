@@ -190,24 +190,25 @@ void HdCyclesMesh::PopulatePoints(HdSceneDelegate *sceneDelegate)
 {
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
   const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
-  const VtValue value = ReadPrimvar(primvars, HdTokens->points);
-
-  if (!value.IsHolding<VtVec3fArray>()) {
+  /* Across the shutter when the points move; the middle sample is the position. */
+  const std::vector<VtVec3fArray> samples = SamplePoints(primvars);
+  if (samples.empty()) {
     HDCYCLES_WARN("Invalid points data for %s", GetId().GetText());
     return;
   }
 
-  const auto &points = value.UncheckedGet<VtVec3fArray>();
+  const VtVec3fArray &points = samples[samples.size() / 2];
+  const size_t numPoints = size_t(_topology.GetNumPoints());
 
-  TF_VERIFY(points.size() >= static_cast<size_t>(_topology.GetNumPoints()));
+  TF_VERIFY(points.size() >= numPoints);
 
   const bool subdivision = _geom->get_subdivision_type() != Mesh::SUBDIVISION_NONE;
   AttributeSet &attributes = (subdivision) ? _geom->subd_attributes : _geom->attributes;
   Attribute *attr_P = attributes.add(ATTR_STD_POSITION);
   packed_float3 *verts = attr_P->data_for_write<packed_float3>();
 
-  std::copy_n(
-      reinterpret_cast<const packed_float3 *>(points.data()), _topology.GetNumPoints(), verts);
+  std::copy_n(reinterpret_cast<const packed_float3 *>(points.data()), numPoints, verts);
+  ApplyPointsMotion(attr_P, samples, numPoints);
   _geom->tag_position_modified();
 }
 

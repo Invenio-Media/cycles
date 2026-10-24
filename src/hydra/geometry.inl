@@ -9,6 +9,7 @@
 #include "hydra/object_settings.h"
 #include "hydra/session.h"
 #include "hydra/util.h"
+#include "scene/attribute.h"
 #include "scene/geometry.h"
 #include "scene/object.h"
 #include "scene/scene.h"
@@ -20,6 +21,9 @@
 #include <pxr/imaging/hd/sceneDelegate.h>
 #include <pxr/imaging/hd/tokens.h>
 #include <pxr/imaging/hd/xformSchema.h>
+
+#include <algorithm>
+#include <utility>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
@@ -130,6 +134,12 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
   }
   const bool motionChanged = motionSteps != _motionSteps;
   _motionSteps = motionSteps;
+  _shutterOpen = shutter.IsOpen() ? shutter.open : 0.0f;
+  _shutterClose = shutter.IsOpen() ? shutter.close : 0.0f;
+  /* Deforming points sample across the shutter with the same steps. */
+  if (motionChanged) {
+    *dirtyBits |= HdChangeTracker::DirtyPoints;
+  }
 
   if (HdChangeTracker::IsTransformDirty(*dirtyBits, id) || motionChanged) {
     _geomTransform = GfMatrix4d(1.0);
@@ -241,6 +251,7 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
   // based on it (e.g. check whether an attribute is actually needed)
   bool rebuild = false;
   Populate(sceneDelegate, *dirtyBits, rebuild);
+  rebuild = rebuild || std::exchange(_motionRebuild, false);
 
   if (_geom->is_modified() || rebuild) {
     _geom->tag_update(lock.scene, rebuild);
@@ -313,6 +324,61 @@ void HdCyclesGeometry<Base, CyclesBase>::InitializeInstance(int index)
 
   instance->set_color(make_float3(0.8f, 0.8f, 0.8f));
   instance->set_random_id(hash_uint2(hash_string(_geom->name.c_str()), index));
+}
+
+template<typename Base, typename CyclesBase>
+std::vector<VtVec3fArray> HdCyclesGeometry<Base, CyclesBase>::SamplePoints(
+    const HdPrimvarsSchema &primvars) const
+{
+  std::vector<VtVec3fArray> samples;
+  const HdSampledDataSourceHandle valueDs =
+      primvars.GetPrimvar(HdTokens->points).GetPrimvarValue();
+  if (!valueDs) {
+    return samples;
+  }
+  /* With UsdGeom velocities, HdsiVelocityMotionResolvingSceneIndex has already turned them into
+   * points that change over time. */
+  for (const float time : MotionSampleTimes(valueDs, _shutterOpen, _shutterClose, _motionSteps)) {
+    const VtValue value = valueDs->GetValue(time);
+    if (!value.IsHolding<VtVec3fArray>()) {
+      return {};
+    }
+    samples.push_back(value.UncheckedGet<VtVec3fArray>());
+  }
+  return samples;
+}
+
+template<typename Base, typename CyclesBase>
+void HdCyclesGeometry<Base, CyclesBase>::ApplyPointsMotion(
+    Attribute *attr_P, const std::vector<VtVec3fArray> &samples, const size_t count)
+{
+  const int oldSteps = attr_P->num_motion_steps();
+  const bool moves = samples.size() > 1 &&
+                     std::all_of(samples.begin(), samples.end(), [count](const VtVec3fArray &s) {
+                       return s.size() >= count;
+                     });
+  if (moves) {
+    const int steps = int(samples.size());
+    _geom->set_motion_steps(steps);
+    _geom->set_use_motion_blur(true);
+    attr_P->add_motion(_geom);
+    static_assert(sizeof(GfVec3f) == sizeof(packed_float3));
+    for (int step = 0; step < steps; ++step) {
+      const int attrStep = attr_P->time_step_to_attr_step(step, steps);
+      if (attrStep != 0) {
+        std::copy_n(reinterpret_cast<const packed_float3 *>(samples[step].data()),
+                    count,
+                    attr_P->data_for_write<packed_float3>(attrStep));
+      }
+    }
+  }
+  else {
+    attr_P->remove_motion();
+    _geom->set_use_motion_blur(false);
+  }
+  if (attr_P->num_motion_steps() != oldSteps) {
+    _motionRebuild = true;
+  }
 }
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

@@ -99,7 +99,7 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
   const unsigned int shutterVersion = _renderParam->shutter.version;
   if (_shutterVersion && *_shutterVersion != shutterVersion) {
     HdChangeTracker &tracker = GetRenderIndex()->GetChangeTracker();
-    tracker.MarkAllRprimsDirty(HdChangeTracker::DirtyTransform);
+    tracker.MarkAllRprimsDirty(HdChangeTracker::DirtyTransform | HdChangeTracker::DirtyPoints);
     if (const HdCamera *const camera = renderPassState->GetCamera()) {
       tracker.MarkSprimDirty(camera->GetId(), HdCamera::DirtyTransform);
     }
