@@ -381,24 +381,38 @@ void HdCyclesCurves::PopulateTopology(HdSceneDelegate *sceneDelegate)
   bool identity = !periodic;
   size_t vertexBase = 0;
   size_t varyingBase = 0;
+  size_t varyingEnd = 0;
   for (const int n : curveVertexCounts) {
     const size_t keysBefore = _vertexKeys.size();
     int segments = 0;
     if (cubic) {
-      segments = periodic ? n / vstep : pinned ? n - 1 : (n - 4) / vstep + 1;
+      segments = periodic ? n / vstep : pinned ? n - 1 : n >= 4 ? (n - 4) / vstep + 1 : 0;
     }
     if (!cubic || segments < 1 || n < 2) {
       /* Linear, or too few points for a cubic span: the points are the keys, a periodic curve's
        * first repeated to close, and a lone point twice, as Cycles' curves need two keys. */
       const int count = std::max(n + (periodic ? 1 : 0), 2);
       identity = identity && count == n;
+      /* A linear curve's varying data is per point; a short cubic curve's count is Hydra's, so
+       * the curves after it keep their offsets. Its keys reach no further than that. */
+      const int varyingCount =
+          cubic ?
+              std::max(0,
+                       int(HdBasisCurvesTopology(
+                               curveType, curveBasis, curveWrap, VtIntArray(1, n), VtIntArray())
+                               .CalculateNeededNumberOfVaryingControlPoints())) :
+              n;
       for (int i = 0; i < count; ++i) {
         HdCyclesCurveKey key;
         AddWeight(key, int(vertexBase) + i % n, 1.0f);
         _vertexKeys.push_back(key);
-        _varyingKeys.push_back(key);
+        HdCyclesCurveKey varying;
+        AddWeight(
+            varying, int(varyingBase) + std::min(i % n, std::max(varyingCount, 1) - 1), 1.0f);
+        _varyingKeys.push_back(varying);
+        varyingEnd = std::max(varyingEnd, size_t(varying.index[0]) + 1);
       }
-      varyingBase += n;
+      varyingBase += varyingCount;
     }
     else {
       identity = false;
@@ -443,7 +457,9 @@ void HdCyclesCurves::PopulateTopology(HdSceneDelegate *sceneDelegate)
     keysPerCurve.push_back(int(_vertexKeys.size() - keysBefore));
   }
   _numVertex = vertexBase;
-  _numVarying = varyingBase;
+  /* Past the end only where a short cubic curve has no varying data of its own; its prim's
+   * varying primvars are then refused as short rather than read past their end. */
+  _numVarying = std::max(varyingBase, varyingEnd);
   if (identity) {
     _vertexKeys.clear();
     _varyingKeys.clear();
