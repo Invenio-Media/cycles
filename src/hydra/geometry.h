@@ -72,6 +72,9 @@ template<typename Base, typename CyclesBase> class HdCyclesGeometry : public Bas
   PXR_NS::GfMatrix4d _geomTransform;
   // The transform at evenly spaced times across the shutter; empty when it doesn't move.
   std::vector<PXR_NS::GfMatrix4d> _geomMotion;
+  // False when the instancer gives the prim no instances: the first object is kept, since the
+  // prim's settings live on it, but hidden.
+  bool _hasInstances = true;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

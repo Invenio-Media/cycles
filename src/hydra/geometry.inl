@@ -177,6 +177,14 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
       _instances[0]->attributes.front() = ParamValue(HdAovTokens->instanceId.GetString(), -1.0f);
     }
 
+    /* An instancer can give the prim no instances (a prototype it doesn't use, or a hidden
+     * native instance). Keep the first object, which the rest of the sync writes to, at the
+     * prim's own transform, and hide it below. */
+    _hasInstances = !transforms.empty();
+    if (!_hasInstances) {
+      transforms.push_back(GfMatrix4d(1.0));
+    }
+
     const size_t oldSize = _instances.size();
     const size_t newSize = transforms.size();
 
@@ -270,7 +278,8 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
     };
     auto *const instancer = static_cast<HdCyclesInstancer *>(
         sceneDelegate->GetRenderIndex().GetInstancer(Base::GetInstancerId()));
-    const bool visible = Base::IsVisible() && (!instancer || instancer->IsVisible());
+    const bool visible = _hasInstances && Base::IsVisible() &&
+                         (!instancer || instancer->IsVisible());
     for (Object *instance : _instances) {
       HdCyclesApplyObjectSettings(instance, visible ? PATH_RAY_VISIBILITY_ALL : 0, read);
     }
