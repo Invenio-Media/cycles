@@ -44,7 +44,9 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
     ((sceneUseTextureCache,    "cycles:scene:use_texture_cache")) \
     ((sceneAutoTextureCache,   "cycles:scene:auto_texture_cache")) \
     ((sceneTextureCachePath,   "cycles:scene:texture_cache_path")) \
-    ((sceneTextureLimit,       "cycles:scene:texture_limit"))
+    ((sceneTextureLimit,       "cycles:scene:texture_limit")) \
+    ((sceneHairShape,          "cycles:scene:hair_shape")) \
+    ((sceneHairSubdivisions,   "cycles:scene:hair_subdivisions"))
 // clang-format on
 
 TF_DECLARE_PUBLIC_TOKENS(HdCyclesRenderSettingsTokens, HD_CYCLES_RENDER_SETTINGS_TOKENS);

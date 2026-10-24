@@ -292,6 +292,20 @@ const std::vector<HdCyclesSettingDesc> &GetSettingsTable()
        VtValue(0),
        {},
        true},
+      /* Curves render as camera-facing ribbons or as round tubes, and a tube's curve is cut
+       * into 2^subdivisions segments a span. Cycles' own defaults. */
+      {HdCyclesRenderSettingsTokens->sceneHairShape,
+       "Curve Shape",
+       "token",
+       VtValue(TfToken("ribbon")),
+       VtStringArray{"ribbon", "thick"},
+       true},
+      {HdCyclesRenderSettingsTokens->sceneHairSubdivisions,
+       "Curve Subdivisions",
+       "int",
+       VtValue(3),
+       {},
+       true},
   };
   return kTable;
 }
@@ -428,6 +442,23 @@ SceneParams HdCyclesDelegate::BuildSceneParams() const
     auto it = _restartSettings.find(HdCyclesRenderSettingsTokens->sceneTextureLimit);
     if (it != _restartSettings.end()) {
       params.texture_limit = VtValue::Cast<int>(it->second).GetWithDefault(params.texture_limit);
+    }
+  }
+  {
+    auto it = _restartSettings.find(HdCyclesRenderSettingsTokens->sceneHairShape);
+    if (it != _restartSettings.end()) {
+      const VtValue &v = it->second;
+      const std::string shape = v.IsHolding<TfToken>() ?
+                                    v.UncheckedGet<TfToken>().GetString() :
+                                    VtValue::Cast<std::string>(v).GetWithDefault(std::string());
+      params.hair_shape = shape == "thick" ? CURVE_THICK : CURVE_RIBBON;
+    }
+  }
+  {
+    auto it = _restartSettings.find(HdCyclesRenderSettingsTokens->sceneHairSubdivisions);
+    if (it != _restartSettings.end()) {
+      params.hair_subdivisions = std::clamp(
+          VtValue::Cast<int>(it->second).GetWithDefault(params.hair_subdivisions), 0, 4);
     }
   }
 

@@ -210,6 +210,14 @@ void HdCyclesCurves::PopulateTopology(HdSceneDelegate *sceneDelegate)
 
   _geom->resize_curves(topology.GetNumCurves(), topology.CalculateNeededNumberOfControlPoints());
 
+  /* The shape the render settings ask for (cycles:scene:hair_shape, in the scene's params),
+   * which Cycles reads per curve object. A thick linear curve is straight tube segments rather
+   * than a Catmull-Rom spline through its points. */
+  const Scene *const scene = static_cast<const Scene *>(_geom->get_owner());
+  _geom->curve_shape = scene->params.hair_shape != CURVE_THICK ? CURVE_RIBBON :
+                       curveType == HdTokens->linear           ? CURVE_THICK_LINEAR :
+                                                                 CURVE_THICK;
+
   const VtIntArray vertCounts = topology.GetCurveVertexCounts();
 
   int *curve_first_key = _geom->get_curve_first_key().data();
