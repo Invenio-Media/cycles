@@ -39,15 +39,15 @@ namespace {
  * `v` for velocity. */
 AttributeStandard FieldStandard(const ustring &name)
 {
-  for (const AttributeStandard std : {ATTR_STD_VOLUME_DENSITY,
-                                      ATTR_STD_VOLUME_COLOR,
-                                      ATTR_STD_VOLUME_FLAME,
-                                      ATTR_STD_VOLUME_HEAT,
-                                      ATTR_STD_VOLUME_TEMPERATURE,
-                                      ATTR_STD_VOLUME_VELOCITY})
+  for (const AttributeStandard standard : {ATTR_STD_VOLUME_DENSITY,
+                                           ATTR_STD_VOLUME_COLOR,
+                                           ATTR_STD_VOLUME_FLAME,
+                                           ATTR_STD_VOLUME_HEAT,
+                                           ATTR_STD_VOLUME_TEMPERATURE,
+                                           ATTR_STD_VOLUME_VELOCITY})
   {
-    if (name == Attribute::standard_name(std)) {
-      return std;
+    if (name == Attribute::standard_name(standard)) {
+      return standard;
     }
   }
   if (name == "vel" || name == "v") {
@@ -94,14 +94,14 @@ void HdCyclesVolume::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyB
               sceneDelegate->GetRenderIndex().GetBprim(_tokens->openvdbAsset, fieldId)))
       {
         const ustring name(fieldName.GetString());
-        const AttributeStandard std = FieldStandard(name);
+        const AttributeStandard standard = FieldStandard(name);
 
         // Skip attributes that are not needed
-        if ((std != ATTR_STD_NONE && _geom->need_attribute(scene, std)) ||
+        if ((standard != ATTR_STD_NONE && _geom->need_attribute(scene, standard)) ||
             _geom->need_attribute(scene, name))
         {
-          Attribute *const attr = (std != ATTR_STD_NONE) ?
-                                      _geom->attributes.add(std) :
+          Attribute *const attr = (standard != ATTR_STD_NONE) ?
+                                      _geom->attributes.add(standard) :
                                       _geom->attributes.add(name, TypeFloat, ATTR_ELEMENT_VOXEL);
           attr->data_voxel_for_write() = openvdbAsset->GetImageHandle();
         }
@@ -113,9 +113,11 @@ void HdCyclesVolume::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyB
     rebuild = true;
   }
 
-  /* The frame's place in the shutter is the camera's, set from the final shutter. */
+  /* The frame's place in the shutter is the camera's, set from the final shutter. Checked once
+   * per shutter; tests/motion_blur matches "is treated as". */
+  const std::pair<float, float> shutterPair(_shutterOpen, _shutterClose);
   if (velocityScale != 0.0f && _geom->attributes.find(ATTR_STD_VOLUME_VELOCITY) &&
-      !std::exchange(_warnedShutter, true))
+      std::exchange(_checkedShutter, shutterPair) != shutterPair)
   {
     HdCyclesShutter shutter;
     shutter.open = _shutterOpen;

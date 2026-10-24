@@ -72,10 +72,11 @@ struct HdCyclesShutter {
     return !disableMotionBlur && !instantaneous && close > open;
   }
 
-  // Where the frame falls across an open shutter: 0 at its open, 1 at its close.
+  // Where the frame falls across the shutter: 0 at its open, 1 at its close; the middle while
+  // it is closed.
   float FrameOffset() const
   {
-    return -open / (close - open);
+    return close > open ? -open / (close - open) : 0.5f;
   }
 
   // Cycles places volume velocity blur at offset 0 or 0.5 only, whichever is nearer.

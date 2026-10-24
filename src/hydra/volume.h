@@ -10,6 +10,8 @@
 
 #include <pxr/imaging/hd/volume.h>
 
+#include <utility>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 class HdCyclesVolume final : public HdCyclesGeometry<PXR_NS::HdVolume, CCL_NS::Volume> {
@@ -24,8 +26,8 @@ class HdCyclesVolume final : public HdCyclesGeometry<PXR_NS::HdVolume, CCL_NS::V
                 PXR_NS::HdDirtyBits dirtyBits,
                 bool &rebuild) override;
 
-  // Whether the shutter's fit for velocity blur has been checked and, if inexact, warned about.
-  bool _warnedShutter = false;
+  // The shutter last checked for velocity blur's fit, so each shutter warns once if inexact.
+  std::pair<float, float> _checkedShutter = {0.0f, 0.0f};
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE
