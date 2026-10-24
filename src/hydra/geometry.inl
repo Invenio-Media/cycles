@@ -193,7 +193,9 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
     }
 
     /* The instances across the shutter when the instancer moves (its transform, instance
-     * primvars or velocities), at the times the prim's own transform is sampled. */
+     * primvars or velocities), at the times the prim's own transform is sampled. Each step reads
+     * the instancer and its parents afresh, per prototype: simple, and cheap at the motion steps
+     * used. Caching per sync is the place to start if large nested instancers get slow. */
     std::vector<VtMatrix4dArray> instanceMotion;
     if (instancer && motionSteps > 1 && instancer->MovesAcross(_shutterOpen, _shutterClose)) {
       for (const float time : ShutterTimes(_shutterOpen, _shutterClose, motionSteps)) {
