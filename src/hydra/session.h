@@ -71,6 +71,22 @@ struct HdCyclesShutter {
   {
     return !disableMotionBlur && !instantaneous && close > open;
   }
+
+  // Where the frame falls across an open shutter: 0 at its open, 1 at its close.
+  float FrameOffset() const
+  {
+    return -open / (close - open);
+  }
+
+  // Cycles places volume velocity blur at offset 0 or 0.5 only, whichever is nearer.
+  bool VolumeBlurCentred() const
+  {
+    return FrameOffset() >= 0.25f;
+  }
+  bool VolumeBlurExact() const
+  {
+    return std::fabs(FrameOffset() - (VolumeBlurCentred() ? 0.5f : 0.0f)) <= 1e-3f;
+  }
 };
 
 class HdCyclesSession final : public PXR_NS::HdRenderParam {

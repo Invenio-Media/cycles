@@ -23,6 +23,9 @@ class HdCyclesVolume final : public HdCyclesGeometry<PXR_NS::HdVolume, CCL_NS::V
   void Populate(PXR_NS::HdSceneDelegate *sceneDelegate,
                 PXR_NS::HdDirtyBits dirtyBits,
                 bool &rebuild) override;
+
+  // Whether the shutter's fit for velocity blur has been checked and, if inexact, warned about.
+  bool _warnedShutter = false;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

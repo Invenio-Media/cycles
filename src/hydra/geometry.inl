@@ -100,7 +100,10 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
       usedShaders[0] = material->GetCyclesShader();
     }
     else {
-      usedShaders[0] = lock.scene->default_surface;
+      /* A volume without a material renders its density grid, as Karma and Blender do; the
+       * default surface has no volume part and would leave it black. */
+      usedShaders[0] = _geom->is_volume() ? lock.scene->default_volume :
+                                            lock.scene->default_surface;
     }
 
     for (Node *shader : usedShaders) {

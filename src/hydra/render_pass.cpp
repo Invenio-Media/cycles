@@ -95,11 +95,12 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
 
   /* Prims sample their motion across the shutter when they sync. husk sends the shutter before
    * the first sync; one that changes after it resamples every prim, and the render camera, on
-   * the next sync. */
+   * the next sync. Volumes load their velocity grid only while the shutter is open. */
   const unsigned int shutterVersion = _renderParam->shutter.version;
   if (_shutterVersion && *_shutterVersion != shutterVersion) {
     HdChangeTracker &tracker = GetRenderIndex()->GetChangeTracker();
-    tracker.MarkAllRprimsDirty(HdChangeTracker::DirtyTransform | HdChangeTracker::DirtyPoints);
+    tracker.MarkAllRprimsDirty(HdChangeTracker::DirtyTransform | HdChangeTracker::DirtyPoints |
+                               HdChangeTracker::DirtyVolumeField);
     if (const HdCamera *const camera = renderPassState->GetCamera()) {
       tracker.MarkSprimDirty(camera->GetId(), HdCamera::DirtyTransform);
     }

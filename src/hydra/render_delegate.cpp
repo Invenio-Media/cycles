@@ -72,6 +72,15 @@ void ApplyShutter(Scene *scene, const HdCyclesShutter &shutter)
 {
   scene->integrator->set_motion_blur(shutter.IsOpen());
   scene->camera->set_shuttertime(shutter.IsOpen() ? shutter.close - shutter.open : 1.0f);
+
+  /* Volume velocity blur advects a grid from the frame by (t - offset) of the shutter, for
+   * ray time t from 0 to 1. Cycles places the frame at offset 0.5 (a centred shutter) or 0 (a
+   * shutter opening at the frame); take the nearer (volumes warn when neither is exact). Its
+   * END position doesn't place the frame at the close. Only the volume kernel reads this. */
+  if (shutter.IsOpen()) {
+    scene->camera->set_motion_position(shutter.VolumeBlurCentred() ? MOTION_POSITION_CENTER :
+                                                                     MOTION_POSITION_START);
+  }
 }
 
 const TfTokenVector kSupportedRPrimTypes = {
