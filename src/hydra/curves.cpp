@@ -13,7 +13,7 @@
 #include <pxr/imaging/hd/basisCurvesSchema.h>
 #include <pxr/imaging/hd/basisCurvesTopologySchema.h>
 
-#include <climits>
+#include <algorithm>
 #include <numeric>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
@@ -77,6 +77,8 @@ void HdCyclesCurves::PopulatePoints(HdSceneDelegate *sceneDelegate)
     for (VtVec3fArray &sample : samples) {
       const VtValue keyed = ResampleVertex(VtValue(sample));
       if (keyed.IsEmpty()) {
+        /* A sample shorter than the topology's points can't be resampled; neither can the
+         * curves be drawn from it. */
         HDCYCLES_WARN("Invalid points data for %s", GetId().GetText());
         return;
       }
@@ -190,11 +192,9 @@ void HdCyclesCurves::PopulatePrimvars(HdSceneDelegate *sceneDelegate)
         if (std == ATTR_STD_VERTEX_NORMAL) {
           elem = ATTR_ELEMENT_CURVE_KEY_NORMAL;
         }
-        const VtValue keyed = interpolation.first == HdInterpolationVertex ?
-                                  ResampleVertex(value) :
-                              interpolation.first == HdInterpolationVarying ?
-                                  ResampleVarying(value) :
-                                  value;
+        VtValue keyed = interpolation.first == HdInterpolationVertex  ? ResampleVertex(value) :
+                        interpolation.first == HdInterpolationVarying ? ResampleVarying(value) :
+                                                                        value;
         if (keyed.IsEmpty()) {
           HDCYCLES_WARN(
               "%s: primvar %s, of type %s, can't be sampled along the curves' basis; "
@@ -203,6 +203,16 @@ void HdCyclesCurves::PopulatePrimvars(HdSceneDelegate *sceneDelegate)
               primvarName.GetText(),
               value.GetTypeName().c_str());
           continue;
+        }
+        if (std == ATTR_STD_VERTEX_NORMAL && !_vertexKeys.empty() &&
+            keyed.IsHolding<VtVec3fArray>())
+        {
+          /* Sampled normals are blends of the authored ones; unit length again. */
+          VtVec3fArray normals = keyed.UncheckedGet<VtVec3fArray>();
+          for (GfVec3f &normal : normals) {
+            normal.Normalize();
+          }
+          keyed = VtValue(std::move(normals));
         }
         ApplyPrimvars(_geom->attributes, name, keyed, elem, std);
       }
@@ -357,6 +367,15 @@ void HdCyclesCurves::PopulateTopology(HdSceneDelegate *sceneDelegate)
   const int keysPerSpan = vstep == 3 ? kKeysPerBezierSpan : kKeysPerSpan;
   _vertexKeys.clear();
   _varyingKeys.clear();
+  _numVertex = 0;
+  _numVarying = 0;
+  if (std::any_of(
+          curveVertexCounts.begin(), curveVertexCounts.end(), [](const int n) { return n < 1; }))
+  {
+    HDCYCLES_WARN("%s: a curve has no points; the curves are not rendered.", GetId().GetText());
+    _geom->resize_curves(0, 0);
+    return;
+  }
   std::vector<int> keysPerCurve;
   keysPerCurve.reserve(curveVertexCounts.size());
   bool identity = !periodic;
@@ -369,8 +388,11 @@ void HdCyclesCurves::PopulateTopology(HdSceneDelegate *sceneDelegate)
       segments = periodic ? n / vstep : pinned ? n - 1 : (n - 4) / vstep + 1;
     }
     if (!cubic || segments < 1 || n < 2) {
-      /* Linear, or too few points for a cubic span: the points are the keys. */
-      for (int i = 0; i <= n - (periodic ? 0 : 1); ++i) {
+      /* Linear, or too few points for a cubic span: the points are the keys, a periodic curve's
+       * first repeated to close, and a lone point twice, as Cycles' curves need two keys. */
+      const int count = std::max(n + (periodic ? 1 : 0), 2);
+      identity = identity && count == n;
+      for (int i = 0; i < count; ++i) {
         HdCyclesCurveKey key;
         AddWeight(key, int(vertexBase) + i % n, 1.0f);
         _vertexKeys.push_back(key);
@@ -404,9 +426,9 @@ void HdCyclesCurves::PopulateTopology(HdSceneDelegate *sceneDelegate)
         }
         _vertexKeys.push_back(key);
         HdCyclesCurveKey varying;
+        const int next = segment + 1;
         AddWeight(varying, int(varyingBase) + segment, 1.0f - t);
-        AddWeight(
-            varying, int(varyingBase) + (segment + 1) % (periodic ? varyingCount : INT_MAX), t);
+        AddWeight(varying, int(varyingBase) + (periodic && next == varyingCount ? 0 : next), t);
         _varyingKeys.push_back(varying);
       };
       for (int segment = 0; segment < segments; ++segment) {
