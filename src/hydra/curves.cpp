@@ -13,6 +13,9 @@
 #include <pxr/imaging/hd/basisCurvesSchema.h>
 #include <pxr/imaging/hd/basisCurvesTopologySchema.h>
 
+#include <climits>
+#include <numeric>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 HdCyclesCurves::HdCyclesCurves(const SdfPath &rprimId) : HdCyclesGeometry(rprimId) {}
@@ -63,11 +66,22 @@ void HdCyclesCurves::PopulatePoints(HdSceneDelegate *sceneDelegate)
 {
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
   const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
-  /* Across the shutter when the points move; the middle sample is the position. */
-  const std::vector<VtVec3fArray> samples = SamplePoints(primvars);
+  /* Across the shutter when the points move; the middle sample is the position. Each sample is
+   * resampled into Cycles' keys when the curves' basis needs it. */
+  std::vector<VtVec3fArray> samples = SamplePoints(primvars);
   if (samples.empty()) {
     HDCYCLES_WARN("Invalid points data for %s", GetId().GetText());
     return;
+  }
+  if (!_vertexKeys.empty()) {
+    for (VtVec3fArray &sample : samples) {
+      const VtValue keyed = ResampleVertex(VtValue(sample));
+      if (keyed.IsEmpty()) {
+        HDCYCLES_WARN("Invalid points data for %s", GetId().GetText());
+        return;
+      }
+      sample = keyed.UncheckedGet<VtVec3fArray>();
+    }
   }
 
   const VtVec3fArray &points = samples[samples.size() / 2];
@@ -87,8 +101,14 @@ void HdCyclesCurves::PopulateWidths(HdSceneDelegate *sceneDelegate)
 {
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
   const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
-  const VtValue value = ReadPrimvar(primvars, HdTokens->widths);
   const HdInterpolation interpolation = ReadPrimvarInterpolation(primvars, HdTokens->widths);
+  VtValue value = ReadPrimvar(primvars, HdTokens->widths);
+  if (interpolation == HdInterpolationVertex) {
+    value = ResampleVertex(value);
+  }
+  else if (interpolation == HdInterpolationVarying) {
+    value = ResampleVarying(value);
+  }
 
   if (!value.IsHolding<VtFloatArray>()) {
     HDCYCLES_WARN("Invalid widths data for %s", GetId().GetText());
@@ -107,10 +127,10 @@ void HdCyclesCurves::PopulateWidths(HdSceneDelegate *sceneDelegate)
       radius[i] = constantRadius;
     }
   }
-  else if (interpolation == HdInterpolationVertex) {
+  else if (interpolation == HdInterpolationVertex || interpolation == HdInterpolationVarying) {
     TF_VERIFY(widths.size() == _geom->num_keys());
 
-    for (size_t i = 0; i < _geom->num_keys(); ++i) {
+    for (size_t i = 0; i < std::min(widths.size(), _geom->num_keys()); ++i) {
       radius[i] = widths[i] * 0.5f;
     }
   }
@@ -170,10 +190,134 @@ void HdCyclesCurves::PopulatePrimvars(HdSceneDelegate *sceneDelegate)
         if (std == ATTR_STD_VERTEX_NORMAL) {
           elem = ATTR_ELEMENT_CURVE_KEY_NORMAL;
         }
-        ApplyPrimvars(_geom->attributes, name, value, elem, std);
+        const VtValue keyed = interpolation.first == HdInterpolationVertex ?
+                                  ResampleVertex(value) :
+                              interpolation.first == HdInterpolationVarying ?
+                                  ResampleVarying(value) :
+                                  value;
+        if (keyed.IsEmpty()) {
+          HDCYCLES_WARN(
+              "%s: primvar %s, of type %s, can't be sampled along the curves' basis; "
+              "ignored.",
+              GetId().GetText(),
+              primvarName.GetText(),
+              value.GetTypeName().c_str());
+          continue;
+        }
+        ApplyPrimvars(_geom->attributes, name, keyed, elem, std);
       }
     }
   }
+}
+
+namespace {
+
+/* Keys sampled along each span of a resampled cubic curve: 4 a span of one control interval
+ * (B-spline, Catmull-Rom) and 8 a Bezier span of three, which bends more. With 4, a long S-shaped
+ * Bezier span drifted a pixel off its curve. */
+constexpr int kKeysPerSpan = 4;
+constexpr int kKeysPerBezierSpan = 8;
+
+void AddWeight(HdCyclesCurveKey &key, const int index, const float weight)
+{
+  for (int i = 0; i < key.count; ++i) {
+    if (key.index[i] == index) {
+      key.weight[i] += weight;
+      return;
+    }
+  }
+  if (TF_VERIFY(key.count < 4)) {
+    key.index[key.count] = index;
+    key.weight[key.count] = weight;
+    ++key.count;
+  }
+}
+
+/* The basis functions of a cubic span at t, from 0 to 1, for its four control points. */
+void BasisWeights(const TfToken &basis, const float t, float w[4])
+{
+  const float s = 1.0f - t, t2 = t * t, t3 = t2 * t;
+  if (basis == HdTokens->bezier) {
+    w[0] = s * s * s;
+    w[1] = 3.0f * t * s * s;
+    w[2] = 3.0f * t2 * s;
+    w[3] = t3;
+  }
+  else if (basis == HdTokens->bSpline) {
+    w[0] = s * s * s / 6.0f;
+    w[1] = (3.0f * t3 - 6.0f * t2 + 4.0f) / 6.0f;
+    w[2] = (-3.0f * t3 + 3.0f * t2 + 3.0f * t + 1.0f) / 6.0f;
+    w[3] = t3 / 6.0f;
+  }
+  else {
+    /* Catmull-Rom. */
+    w[0] = (-t3 + 2.0f * t2 - t) * 0.5f;
+    w[1] = (3.0f * t3 - 5.0f * t2 + 2.0f) * 0.5f;
+    w[2] = (-3.0f * t3 + 4.0f * t2 + t) * 0.5f;
+    w[3] = (t3 - t2) * 0.5f;
+  }
+}
+
+template<typename T>
+VtArray<T> Resample(const VtArray<T> &in, const std::vector<HdCyclesCurveKey> &keys)
+{
+  VtArray<T> out(keys.size());
+  for (size_t k = 0; k < keys.size(); ++k) {
+    const HdCyclesCurveKey &key = keys[k];
+    T value = in[key.index[0]] * key.weight[0];
+    for (int i = 1; i < key.count; ++i) {
+      value += in[key.index[i]] * key.weight[i];
+    }
+    out[k] = value;
+  }
+  return out;
+}
+
+template<typename T>
+bool ResampleIf(const VtValue &value,
+                const std::vector<HdCyclesCurveKey> &keys,
+                const size_t count,
+                VtValue &out)
+{
+  if (!value.IsHolding<VtArray<T>>()) {
+    return false;
+  }
+  const auto &in = value.UncheckedGet<VtArray<T>>();
+  if (in.size() >= count) {
+    out = VtValue(Resample(in, keys));
+  }
+  return true;
+}
+
+VtValue ResampleValue(const VtValue &value,
+                      const std::vector<HdCyclesCurveKey> &keys,
+                      const size_t count)
+{
+  if (keys.empty()) {
+    return value;
+  }
+  VtValue out;
+  (void)(ResampleIf<float>(value, keys, count, out) ||
+         ResampleIf<double>(value, keys, count, out) ||
+         ResampleIf<GfVec2f>(value, keys, count, out) ||
+         ResampleIf<GfVec3f>(value, keys, count, out) ||
+         ResampleIf<GfVec4f>(value, keys, count, out) ||
+         ResampleIf<GfVec2d>(value, keys, count, out) ||
+         ResampleIf<GfVec3d>(value, keys, count, out) ||
+         ResampleIf<GfVec4d>(value, keys, count, out));
+  return out;
+}
+
+}  // namespace
+
+VtValue HdCyclesCurves::ResampleVertex(const VtValue &value) const
+{
+  return ResampleValue(value, _vertexKeys, _numVertex);
+}
+
+VtValue HdCyclesCurves::ResampleVarying(const VtValue &value) const
+{
+  return ResampleValue(value, _varyingKeys, _numVarying);
 }
 
 void HdCyclesCurves::PopulateTopology(HdSceneDelegate *sceneDelegate)
@@ -201,14 +345,90 @@ void HdCyclesCurves::PopulateTopology(HdSceneDelegate *sceneDelegate)
   if (auto ds = topoSchema.GetCurveVertexCounts()) {
     curveVertexCounts = ds->GetTypedValue(0.0f);
   }
-  VtIntArray curveIndices;
-  if (auto ds = topoSchema.GetCurveIndices()) {
-    curveIndices = ds->GetTypedValue(0.0f);
-  }
-  const HdBasisCurvesTopology topology(
-      curveType, curveBasis, curveWrap, curveVertexCounts, curveIndices);
 
-  _geom->resize_curves(topology.GetNumCurves(), topology.CalculateNeededNumberOfControlPoints());
+  /* Cycles' keys for each curve, as weighted sums of its authored points (vertex data) and of
+   * its segment ends (varying data), following UsdGeomBasisCurves. Cubic spans are sampled
+   * along their basis; a periodic curve repeats its start to close; a pinned B-spline or
+   * Catmull-Rom curve reaches its ends through phantom points (2 p0 - p1). */
+  const bool cubic = curveType == HdTokens->cubic;
+  const bool periodic = curveWrap == HdTokens->periodic;
+  const bool pinned = curveWrap == HdTokens->pinned && curveBasis != HdTokens->bezier;
+  const int vstep = curveBasis == HdTokens->bezier ? 3 : 1;
+  const int keysPerSpan = vstep == 3 ? kKeysPerBezierSpan : kKeysPerSpan;
+  _vertexKeys.clear();
+  _varyingKeys.clear();
+  std::vector<int> keysPerCurve;
+  keysPerCurve.reserve(curveVertexCounts.size());
+  bool identity = !periodic;
+  size_t vertexBase = 0;
+  size_t varyingBase = 0;
+  for (const int n : curveVertexCounts) {
+    const size_t keysBefore = _vertexKeys.size();
+    int segments = 0;
+    if (cubic) {
+      segments = periodic ? n / vstep : pinned ? n - 1 : (n - 4) / vstep + 1;
+    }
+    if (!cubic || segments < 1 || n < 2) {
+      /* Linear, or too few points for a cubic span: the points are the keys. */
+      for (int i = 0; i <= n - (periodic ? 0 : 1); ++i) {
+        HdCyclesCurveKey key;
+        AddWeight(key, int(vertexBase) + i % n, 1.0f);
+        _vertexKeys.push_back(key);
+        _varyingKeys.push_back(key);
+      }
+      varyingBase += n;
+    }
+    else {
+      identity = false;
+      const int varyingCount = periodic ? segments : segments + 1;
+      auto addKey = [&](const int segment, const float t) {
+        float w[4];
+        BasisWeights(curveBasis, t, w);
+        HdCyclesCurveKey key;
+        for (int j = 0; j < 4; ++j) {
+          const int v = segment * vstep + j - (pinned ? 1 : 0);
+          if (periodic) {
+            AddWeight(key, int(vertexBase) + (v % n + n) % n, w[j]);
+          }
+          else if (v < 0) {
+            AddWeight(key, int(vertexBase), 2.0f * w[j]);
+            AddWeight(key, int(vertexBase) + 1, -w[j]);
+          }
+          else if (v >= n) {
+            AddWeight(key, int(vertexBase) + n - 1, 2.0f * w[j]);
+            AddWeight(key, int(vertexBase) + n - 2, -w[j]);
+          }
+          else {
+            AddWeight(key, int(vertexBase) + v, w[j]);
+          }
+        }
+        _vertexKeys.push_back(key);
+        HdCyclesCurveKey varying;
+        AddWeight(varying, int(varyingBase) + segment, 1.0f - t);
+        AddWeight(
+            varying, int(varyingBase) + (segment + 1) % (periodic ? varyingCount : INT_MAX), t);
+        _varyingKeys.push_back(varying);
+      };
+      for (int segment = 0; segment < segments; ++segment) {
+        for (int k = 0; k < keysPerSpan; ++k) {
+          addKey(segment, float(k) / keysPerSpan);
+        }
+      }
+      addKey(segments - 1, 1.0f);
+      varyingBase += varyingCount;
+    }
+    vertexBase += n;
+    keysPerCurve.push_back(int(_vertexKeys.size() - keysBefore));
+  }
+  _numVertex = vertexBase;
+  _numVarying = varyingBase;
+  if (identity) {
+    _vertexKeys.clear();
+    _varyingKeys.clear();
+  }
+
+  const size_t numKeys = std::accumulate(keysPerCurve.begin(), keysPerCurve.end(), size_t(0));
+  _geom->resize_curves(int(keysPerCurve.size()), numKeys);
 
   /* The shape the render settings ask for (cycles:scene:hair_shape, in the scene's params),
    * which Cycles reads per curve object. A thick linear curve is straight tube segments rather
@@ -218,17 +438,13 @@ void HdCyclesCurves::PopulateTopology(HdSceneDelegate *sceneDelegate)
                        curveType == HdTokens->linear           ? CURVE_THICK_LINEAR :
                                                                  CURVE_THICK;
 
-  const VtIntArray vertCounts = topology.GetCurveVertexCounts();
-
   int *curve_first_key = _geom->get_curve_first_key().data();
-
-  for (int curve = 0, key = 0; curve < topology.GetNumCurves(); ++curve) {
-    // Always reference shader at index zero, which is the primitive material
-    curve_first_key[curve] = key;
-
-    key += vertCounts[curve];
+  for (size_t curve = 0, key = 0; curve < keysPerCurve.size(); ++curve) {
+    curve_first_key[curve] = int(key);
+    key += keysPerCurve[curve];
   }
 
+  // Always reference shader at index zero, which is the primitive material
   std::ranges::fill(_geom->get_curve_shader(), 0);
 
   _geom->tag_curve_first_key_modified();
