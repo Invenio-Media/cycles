@@ -36,6 +36,11 @@ class HdCyclesInstancer final : public PXR_NS::HdInstancer {
   // primvars change over it (velocities included), or a parent instancer's do.
   bool MovesAcross(float shutterOpen, float shutterClose);
 
+  // Whether the instancer and every instancer above it are visible. Houdini 22's UsdImaging no
+  // longer makes the prototypes of an invisible point instancer invisible (Houdini 21's does),
+  // so the instances take the instancer's visibility.
+  bool IsVisible();
+
   // The light-linking categories of each instance of a prototype, in the order of
   // ComputeInstanceTransforms: the instancer's own, each instance's, and its parents'.
   std::vector<PXR_NS::VtArray<PXR_NS::TfToken>> ComputeInstanceCategories(

@@ -16,6 +16,7 @@
 #include <pxr/imaging/hd/primvarSchema.h>
 #include <pxr/imaging/hd/primvarsSchema.h>
 #include <pxr/imaging/hd/sceneDelegate.h>
+#include <pxr/imaging/hd/visibilitySchema.h>
 #include <pxr/imaging/hd/xformSchema.h>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
@@ -113,6 +114,20 @@ bool HdCyclesInstancer::MovesAcross(const float shutterOpen, const float shutter
   return parentInstancer && parentInstancer->MovesAcross(shutterOpen, shutterClose);
 }
 
+bool HdCyclesInstancer::IsVisible()
+{
+  const HdSceneIndexPrim prim = GetPrim(GetDelegate(), GetId());
+  if (const HdBoolDataSourceHandle visibility =
+          HdVisibilitySchema::GetFromParent(prim.dataSource).GetVisibility())
+  {
+    if (!visibility->GetTypedValue(0.0f)) {
+      return false;
+    }
+  }
+  HdCyclesInstancer *const parentInstancer = GetParentInstancer(prim.dataSource);
+  return !parentInstancer || parentInstancer->IsVisible();
+}
+
 VtMatrix4dArray HdCyclesInstancer::ComputeInstanceTransforms(const SdfPath &prototypeId,
                                                              const float time)
 {
@@ -142,13 +157,20 @@ VtMatrix4dArray HdCyclesInstancer::ComputeInstanceTransforms(const SdfPath &prot
   VtMatrix4dArray transforms;
   transforms.reserve(instanceIndices.size());
 
+  /* GfMatrix4d transforms row vectors, so a product applies its left factor first. Hydra's
+   * order: the instance's own transform, then scale, rotation, translation, and the
+   * instancer's transform. */
   for (const int index : instanceIndices) {
-    GfMatrix4d transform = instanceTransform;
+    GfMatrix4d transform(1.0);
 
-    if (index < translate.size()) {
-      GfMatrix4d translateMat(1);
-      translateMat.SetTranslate(translate[index]);
-      transform *= translateMat;
+    if (index < transformsPrimvar.size()) {
+      transform = transformsPrimvar[index];
+    }
+
+    if (index < scale.size()) {
+      GfMatrix4d scaleMat(1);
+      scaleMat.SetScale(scale[index]);
+      transform *= scaleMat;
     }
 
     if (index < rotate.size()) {
@@ -158,17 +180,13 @@ VtMatrix4dArray HdCyclesInstancer::ComputeInstanceTransforms(const SdfPath &prot
       transform *= rotateMat;
     }
 
-    if (index < scale.size()) {
-      GfMatrix4d scaleMat(1);
-      scaleMat.SetScale(scale[index]);
-      transform *= scaleMat;
+    if (index < translate.size()) {
+      GfMatrix4d translateMat(1);
+      translateMat.SetTranslate(translate[index]);
+      transform *= translateMat;
     }
 
-    if (index < transformsPrimvar.size()) {
-      transform *= transformsPrimvar[index];
-    }
-
-    transforms.push_back(transform);
+    transforms.push_back(transform * instanceTransform);
   }
 
   /* Recurse into the parent instancer, at the same time. */
@@ -177,7 +195,7 @@ VtMatrix4dArray HdCyclesInstancer::ComputeInstanceTransforms(const SdfPath &prot
     for (const GfMatrix4d &parentTransform : parentInstancer->ComputeInstanceTransforms(id, time))
     {
       for (const GfMatrix4d &localTransform : transforms) {
-        resultTransforms.push_back(parentTransform * localTransform);
+        resultTransforms.push_back(localTransform * parentTransform);
       }
     }
     return resultTransforms;

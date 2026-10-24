@@ -205,6 +205,12 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
         }
       }
     }
+    /* Both are sampled at the prim's motion steps when they move. */
+    if (!_geomMotion.empty() && !instanceMotion.empty() &&
+        !TF_VERIFY(_geomMotion.size() == instanceMotion.size()))
+    {
+      instanceMotion.clear();
+    }
     const size_t steps = std::max(_geomMotion.size(), instanceMotion.size());
 
     // Update transforms of all instances, with their motion across the shutter.
@@ -260,8 +266,11 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
     const HdCyclesSettingReader read = [&primvars](const char *name) {
       return ReadPrimvar(primvars, TfToken(std::string("cycles:object:") + name));
     };
+    auto *const instancer = static_cast<HdCyclesInstancer *>(
+        sceneDelegate->GetRenderIndex().GetInstancer(Base::GetInstancerId()));
+    const bool visible = Base::IsVisible() && (!instancer || instancer->IsVisible());
     for (Object *instance : _instances) {
-      HdCyclesApplyObjectSettings(instance, Base::IsVisible() ? PATH_RAY_VISIBILITY_ALL : 0, read);
+      HdCyclesApplyObjectSettings(instance, visible ? PATH_RAY_VISIBILITY_ALL : 0, read);
     }
   }
 
