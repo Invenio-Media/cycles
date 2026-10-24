@@ -60,10 +60,13 @@ T GetTypedValue(const PXR_NS::HdContainerDataSourceHandle &container,
   return fallback;
 }
 
-/* The times to sample a data source at for motion blur, in frames from the current frame:
- * `steps` times spread evenly across the shutter, as Cycles spreads a ray's time evenly across a
- * motion array; or only 0 when the shutter is closed, there is one step, or the data source
- * doesn't change across the shutter. */
+/* `steps` times spread evenly across the shutter, in frames from the current frame, as Cycles
+ * spreads a ray's time evenly across a motion array; only 0 when the shutter is closed or there
+ * is one step. */
+std::vector<float> ShutterTimes(float shutterOpen, float shutterClose, int steps);
+
+/* The times to sample a data source at for motion blur: ShutterTimes, or only 0 when the data
+ * source doesn't change across the shutter. */
 std::vector<float> MotionSampleTimes(const PXR_NS::HdSampledDataSourceHandle &ds,
                                      float shutterOpen,
                                      float shutterClose,

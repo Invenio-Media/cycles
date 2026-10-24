@@ -162,15 +162,9 @@ void ApplyPrimvars(AttributeSet &attributes,
   std::memcpy(attr->data_for_write(), data, size);
 }
 
-std::vector<float> MotionSampleTimes(const HdSampledDataSourceHandle &ds,
-                                     const float shutterOpen,
-                                     const float shutterClose,
-                                     const int steps)
+std::vector<float> ShutterTimes(const float shutterOpen, const float shutterClose, const int steps)
 {
-  std::vector<float> contributing;
-  if (!ds || steps < 2 || !(shutterClose > shutterOpen) ||
-      !ds->GetContributingSampleTimesForInterval(shutterOpen, shutterClose, &contributing))
-  {
+  if (steps < 2 || !(shutterClose > shutterOpen)) {
     return {0.0f};
   }
   std::vector<float> times(steps);
@@ -180,6 +174,19 @@ std::vector<float> MotionSampleTimes(const HdSampledDataSourceHandle &ds,
                    shutterOpen + (shutterClose - shutterOpen) * float(i) / float(steps - 1);
   }
   return times;
+}
+
+std::vector<float> MotionSampleTimes(const HdSampledDataSourceHandle &ds,
+                                     const float shutterOpen,
+                                     const float shutterClose,
+                                     const int steps)
+{
+  std::vector<float> contributing;
+  if (!ds || !ds->GetContributingSampleTimesForInterval(shutterOpen, shutterClose, &contributing))
+  {
+    return {0.0f};
+  }
+  return ShutterTimes(shutterOpen, shutterClose, steps);
 }
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

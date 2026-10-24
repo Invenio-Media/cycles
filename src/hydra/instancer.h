@@ -28,7 +28,13 @@ class HdCyclesInstancer final : public PXR_NS::HdInstancer {
             PXR_NS::HdRenderParam *renderParam,
             PXR_NS::HdDirtyBits *dirtyBits) override;
 
-  PXR_NS::VtMatrix4dArray ComputeInstanceTransforms(const PXR_NS::SdfPath &prototypeId);
+  // The transforms of a prototype's instances at a time, in frames from the current frame.
+  PXR_NS::VtMatrix4dArray ComputeInstanceTransforms(const PXR_NS::SdfPath &prototypeId,
+                                                    float time = 0.0f);
+
+  // Whether the instances move across the shutter: the instancer's transform or its instance
+  // primvars change over it (velocities included), or a parent instancer's do.
+  bool MovesAcross(float shutterOpen, float shutterClose);
 
   // The light-linking categories of each instance of a prototype, in the order of
   // ComputeInstanceTransforms: the instancer's own, each instance's, and its parents'.
@@ -36,15 +42,8 @@ class HdCyclesInstancer final : public PXR_NS::HdInstancer {
       const PXR_NS::SdfPath &prototypeId);
 
  private:
-  void SyncPrimvars();
-
   // The instancer that instances this one, or null.
   HdCyclesInstancer *GetParentInstancer(const PXR_NS::HdContainerDataSourceHandle &primDs);
-
-  PXR_NS::VtVec3fArray _translate;
-  PXR_NS::VtVec4fArray _rotate;
-  PXR_NS::VtVec3fArray _scale;
-  PXR_NS::VtMatrix4dArray _instanceTransform;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

@@ -192,6 +192,21 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
       InitializeInstance(static_cast<int>(i));
     }
 
+    /* The instances across the shutter when the instancer moves (its transform, instance
+     * primvars or velocities), at the times the prim's own transform is sampled. */
+    std::vector<VtMatrix4dArray> instanceMotion;
+    if (instancer && motionSteps > 1 && instancer->MovesAcross(_shutterOpen, _shutterClose)) {
+      for (const float time : ShutterTimes(_shutterOpen, _shutterClose, motionSteps)) {
+        instanceMotion.push_back(instancer->ComputeInstanceTransforms(id, time));
+        if (instanceMotion.back().size() != transforms.size()) {
+          /* Instances come or go within the shutter: no motion to give them. */
+          instanceMotion.clear();
+          break;
+        }
+      }
+    }
+    const size_t steps = std::max(_geomMotion.size(), instanceMotion.size());
+
     // Update transforms of all instances, with their motion across the shutter.
     const float metersPerUnit =
         static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
@@ -199,9 +214,12 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
     for (size_t i = 0; i < transforms.size(); ++i) {
       _instances[i]->set_tfm(scale * convert_transform(_geomTransform * transforms[i]));
 
-      array<Transform> motion(_geomMotion.size());
-      for (size_t step = 0; step < _geomMotion.size(); ++step) {
-        motion[step] = scale * convert_transform(_geomMotion[step] * transforms[i]);
+      array<Transform> motion(steps);
+      for (size_t step = 0; step < steps; ++step) {
+        const GfMatrix4d &prim = _geomMotion.empty() ? _geomTransform : _geomMotion[step];
+        const GfMatrix4d &instance = instanceMotion.empty() ? transforms[i] :
+                                                              instanceMotion[step][i];
+        motion[step] = scale * convert_transform(prim * instance);
       }
       _instances[i]->set_motion(motion);
     }
