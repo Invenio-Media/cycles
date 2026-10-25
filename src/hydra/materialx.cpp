@@ -7,6 +7,8 @@
 #include "hydra/diagnostic.h"
 #include "util/colorspace.h"
 
+#include <pxr/base/gf/matrix3d.h>
+#include <pxr/base/gf/matrix4d.h>
 #include <pxr/base/gf/vec2d.h>
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec3d.h>
@@ -15,6 +17,7 @@
 #include <pxr/base/gf/vec4f.h>
 #include <pxr/imaging/hd/dataSourceMaterialNetworkInterface.h>
 #include <pxr/imaging/hdMtlx/hdMtlx.h>
+#include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/sdr/registry.h>
 #include <pxr/usd/sdr/shaderNode.h>
 #include <pxr/usd/sdr/shaderProperty.h>
@@ -72,11 +75,15 @@ GfVec3f ToVec3(const VtValue &value);
 
 namespace mx = MaterialX;
 
-/* A MaterialX value as USD holds it. */
-VtValue FromMtlx(const mx::ValuePtr &value)
+/* A MaterialX value as USD holds it, or empty for a type this doesn't convert. */
+VtValue FromMtlx(const mx::ValueElementPtr &element)
 {
+  const mx::ValuePtr value = element->getValue();
   if (!value) {
     return VtValue();
+  }
+  if (element->getType() == "filename") {
+    return VtValue(SdfAssetPath(value->getValueString()));
   }
   if (value->isA<float>()) {
     return VtValue(value->asA<float>());
@@ -106,6 +113,30 @@ VtValue FromMtlx(const mx::ValuePtr &value)
   if (value->isA<mx::Color4>()) {
     const mx::Color4 &v = value->asA<mx::Color4>();
     return VtValue(GfVec4f(v[0], v[1], v[2], v[3]));
+  }
+  if (value->isA<mx::Matrix33>()) {
+    const mx::Matrix33 &m = value->asA<mx::Matrix33>();
+    return VtValue(GfMatrix3d(
+        m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2]));
+  }
+  if (value->isA<mx::Matrix44>()) {
+    const mx::Matrix44 &m = value->asA<mx::Matrix44>();
+    return VtValue(GfMatrix4d(m[0][0],
+                              m[0][1],
+                              m[0][2],
+                              m[0][3],
+                              m[1][0],
+                              m[1][1],
+                              m[1][2],
+                              m[1][3],
+                              m[2][0],
+                              m[2][1],
+                              m[2][2],
+                              m[2][3],
+                              m[3][0],
+                              m[3][1],
+                              m[3][2],
+                              m[3][3]));
   }
   if (value->isA<std::string>()) {
     return VtValue(value->asA<std::string>());
@@ -1237,34 +1268,6 @@ bool MaterialXTranslator::TranslateNode(const std::string &family)
     Provide("out", Operand::Output(node, "vector"));
     return true;
   }
-  if (family == "switch") {
-    /* which picks in1 to in10, from 0. A constant picks one; a connected which steps through
-     * them, each taking over where which reaches its index. */
-    const auto input = [this](const int index) {
-      return In(("in" + std::to_string(index + 1)).c_str());
-    };
-    const Operand &which = In("which");
-    if (!which.connection) {
-      Provide("out", input(std::clamp(int(ConstantFloat("which", 0.0f)), 0, 9)));
-      return true;
-    }
-    const bool vector = !IsFloatType();
-    Operand out = input(0);
-    for (int index = 1; index < 10; ++index) {
-      if (!_inputs.count(TfToken("in" + std::to_string(index + 1)))) {
-        continue;
-      }
-      out = Mix(out,
-                input(index),
-                Math("greater_than",
-                     AsFloat(which),
-                     Operand::Constant(VtValue(float(index) - 0.5f)),
-                     false),
-                vector);
-    }
-    Provide("out", out);
-    return true;
-  }
   if (family == "hsvtorgb" || family == "rgbtohsv") {
     /* OSL's HSV, as MaterialX's implementations use, is Cycles': hue, saturation and value
      * from 0 to 1. A color4's alpha isn't carried, as elsewhere in this translation. */
@@ -1390,6 +1393,18 @@ bool MaterialXTranslator::Expand(std::deque<TfToken> &queue)
       [this](const TfToken &node, const TfToken &input, const InputConnection &connection) {
         _network.SetNodeInputConnection(node, input, {connection});
       };
+  /* A value from the library; a type FromMtlx doesn't convert would otherwise fall silently to
+   * a default. */
+  const auto valueOf = [this](const mx::ValueElementPtr &element) {
+    VtValue value = FromMtlx(element);
+    if (value.IsEmpty() && element->hasValueString()) {
+      HDCYCLES_WARN("MaterialX %s: ignoring %s's %s value from the standard library",
+                    _node.GetText(),
+                    element->getName().c_str(),
+                    element->getType().c_str());
+    }
+    return value;
+  };
 
   for (const mx::NodePtr &inner : nodes) {
     const TfToken name = innerName(inner->getName());
@@ -1405,7 +1420,7 @@ bool MaterialXTranslator::Expand(std::deque<TfToken> &queue)
       }
       const std::string &interfaceName = input->getInterfaceName();
       if (interfaceName.empty()) {
-        if (const VtValue value = FromMtlx(input->getValue()); !value.IsEmpty()) {
+        if (const VtValue value = valueOf(input); !value.IsEmpty()) {
           _network.SetNodeParameterValue(name, inputName, value);
         }
         continue;
@@ -1422,7 +1437,8 @@ bool MaterialXTranslator::Expand(std::deque<TfToken> &queue)
         connect(name, inputName, *outer.connection);
       }
       else if (geometry && !_authoredInputs.count(TfToken(interfaceName))) {
-        const TfToken source = innerName(inner->getName() + "_" + interfaceName);
+        /* Suffixed "_hdc" as the translation's helper nodes are, apart from the library's. */
+        const TfToken source = innerName(inner->getName() + "_hdcgeom_" + interfaceName);
         _network.SetNodeType(source,
                              TfToken("ND_" + geometry->getGeomProp() + "_" + bound->getType()));
         if (!geometry->getSpace().empty()) {
@@ -1439,8 +1455,9 @@ bool MaterialXTranslator::Expand(std::deque<TfToken> &queue)
         _network.SetNodeParameterValue(name, inputName, outer.constant);
       }
       else if (bound) {
-        /* The outer definition's default, not the inner node's. */
-        if (const VtValue value = FromMtlx(bound->getValue()); !value.IsEmpty()) {
+        /* Sdr gives an unauthored input its definition's default; where it has none, the
+         * outer definition's value, not the inner node's default. */
+        if (const VtValue value = valueOf(bound); !value.IsEmpty()) {
           _network.SetNodeParameterValue(name, inputName, value);
         }
       }
