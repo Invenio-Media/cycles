@@ -604,10 +604,11 @@ void HdCyclesMaterial::Sync(HdSceneDelegate *sceneDelegate,
         }
         else if (name != "bump") {
           HDCYCLES_WARN(
-              "%s: config:cycles:displacement_method must be bump, true or both, not "
-              "'%s'; bump is used.",
+              "%s: config:cycles:displacement_method must be bump, true or both, not %s (%s); "
+              "bump is used.",
               id.GetText(),
-              name.c_str());
+              TfStringify(value).c_str(),
+              value.GetTypeName().c_str());
         }
       }
     }
