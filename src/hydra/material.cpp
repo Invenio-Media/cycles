@@ -555,14 +555,19 @@ void HdCyclesMaterial::Sync(HdSceneDelegate *sceneDelegate,
           contexts ? HdContainerDataSource::Cast(contexts->Get(context)) : nullptr);
     };
     HdMaterialNetworkSchema network = contextNetwork(CyclesMaterialTokens->cycles);
+    /* The material settings live in the network's config (see below); a translated MaterialX
+     * network has none, so keep the authored one's. */
+    HdSampledDataSourceContainerSchema config = network.GetConfig();
     if (!network) {
       if (HdMaterialNetworkSchema mtlx = contextNetwork(CyclesMaterialTokens->mtlx)) {
+        config = mtlx.GetConfig();
         network = HdMaterialNetworkSchema(
             HdCyclesTranslateMaterialX(id, mtlx.GetContainer(), primDs));
       }
     }
     if (!network) {
       network = matSchema.GetMaterialNetwork();
+      config = network.GetConfig();
     }
 
     if (network) {
@@ -578,6 +583,35 @@ void HdCyclesMaterial::Sync(HdSceneDelegate *sceneDelegate,
     else {
       HDCYCLES_ERROR("Could not get a material network for %s.", id.GetText());
     }
+
+    /* Material settings, from the Material prim's config: namespace, which Hydra keeps as the
+     * network's config: config:cycles:displacement_method is bump (Cycles' default), true or
+     * both. */
+    static const TfToken displacementMethodToken("cycles:displacement_method");
+    DisplacementMethod method = DISPLACE_BUMP;
+    if (config) {
+      if (const HdSampledDataSourceHandle ds = config.Get(displacementMethodToken)) {
+        const VtValue value = ds->GetValue(0.0f);
+        const std::string name = value.IsHolding<TfToken>() ?
+                                     value.UncheckedGet<TfToken>().GetString() :
+                                     VtValue::Cast<std::string>(value).GetWithDefault(
+                                         std::string());
+        if (name == "true") {
+          method = DISPLACE_TRUE;
+        }
+        else if (name == "both") {
+          method = DISPLACE_BOTH;
+        }
+        else if (name != "bump") {
+          HDCYCLES_WARN(
+              "%s: config:cycles:displacement_method must be bump, true or both, not "
+              "'%s'; bump is used.",
+              id.GetText(),
+              name.c_str());
+        }
+      }
+    }
+    _shader->set_displacement_method(method);
   }
 
   if (_shader->is_modified()) {
