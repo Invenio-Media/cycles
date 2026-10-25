@@ -97,6 +97,8 @@ NODE_DEFINE(Object)
   SOCKET_BOOLEAN(is_caustics_caster, "Cast Shadow Caustics", false);
   SOCKET_BOOLEAN(is_caustics_receiver, "Receive Shadow Caustics", false);
 
+  SOCKET_FLOAT(volume_density_scale, "Volume Density Scale", 1.0f);
+
   SOCKET_BOOLEAN(is_bake_target, "Bake Target", false);
 
   SOCKET_NODE(particle_system, "Particle System", ParticleSystem::get_node_type());
@@ -583,7 +585,7 @@ void ObjectManager::device_update_object_transform(UpdateObjectTransformState *s
 
   kobject.tfm = tfm;
   kobject.itfm = itfm;
-  kobject.volume_density = object_volume_density(tfm, geom);
+  kobject.volume_density = ob->get_volume_density_scale() * object_volume_density(tfm, geom);
   kobject.color[0] = color.x;
   kobject.color[1] = color.y;
   kobject.color[2] = color.z;

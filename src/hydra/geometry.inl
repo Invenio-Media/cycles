@@ -284,8 +284,19 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
         sceneDelegate->GetRenderIndex().GetInstancer(Base::GetInstancerId()));
     const bool visible = _hasInstances && Base::IsVisible() &&
                          (!instancer || instancer->IsVisible());
+    /* Volume density per stage unit, as Karma has it: the scene is in metres here, where
+     * density is per metre. A volume in object space has it per object unit, which Cycles'
+     * own factor already gives. Read from the primvar, as the volume sync sets its space after
+     * this. */
+    const VtValue space = read("volume:space");
+    const bool objectSpace = _geom->is_volume() &&
+                             (space.IsHolding<TfToken>() ?
+                                  space.UncheckedGet<TfToken>().GetString() :
+                                  HdCyclesSettingValue<std::string>(space, "")) == "object";
+    const float densityScale = objectSpace ? 1.0f : 1.0f / _metersPerUnit;
     for (Object *instance : _instances) {
       HdCyclesApplyObjectSettings(instance, visible ? PATH_RAY_VISIBILITY_ALL : 0, read);
+      instance->set_volume_density_scale(densityScale);
     }
   }
 

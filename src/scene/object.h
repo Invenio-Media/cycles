@@ -59,6 +59,10 @@ class Object : public Node {
   NODE_SOCKET_API(bool, is_caustics_caster)
   NODE_SOCKET_API(bool, is_caustics_receiver)
 
+  /* Multiplies the density of the object's volume (closures, emission and majorants), as a
+   * host scaling the scene to other units needs. */
+  NODE_SOCKET_API(float, volume_density_scale)
+
   NODE_SOCKET_API(bool, is_bake_target)
 
   NODE_SOCKET_API(float3, dupli_generated)
