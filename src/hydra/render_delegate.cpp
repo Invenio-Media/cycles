@@ -60,28 +60,12 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     ((shutterClose, "shutter:close"))
     (disableMotionBlur)
     (instantaneousShutter)
+    // The render camera, which Houdini's viewport and husk name.
+    (renderCameraPath)
 );
 // clang-format on
 
 namespace {
-
-/* Motion blur is on while the shutter is open; Cycles samples ray times only when the camera's
- * shutter time is positive. Nothing else sets the integrator's motion_blur, which isn't an
- * exposed setting (kIntegratorExcluded). Call with the scene locked. */
-void ApplyShutter(Scene *scene, const HdCyclesShutter &shutter)
-{
-  scene->integrator->set_motion_blur(shutter.IsOpen());
-  scene->camera->set_shuttertime(shutter.IsOpen() ? shutter.close - shutter.open : 1.0f);
-
-  /* Volume velocity blur advects a grid from the frame by (t - offset) of the shutter, for
-   * ray time t from 0 to 1. Cycles places the frame at offset 0.5 (a centred shutter) or 0 (a
-   * shutter opening at the frame); take the nearer (volumes warn when neither is exact). Its
-   * END position doesn't place the frame at the close. Only the volume kernel reads this. */
-  if (shutter.IsOpen()) {
-    scene->camera->set_motion_position(shutter.VolumeBlurCentred() ? MOTION_POSITION_CENTER :
-                                                                     MOTION_POSITION_START);
-  }
-}
 
 const TfTokenVector kSupportedRPrimTypes = {
     HdPrimTypeTokens->basisCurves,
@@ -575,9 +559,8 @@ void HdCyclesDelegate::RebuildSession()
   newSession->productFraming = _renderParam->productFraming;
   newSession->shutter = _renderParam->shutter;
   {
-    Scene *const scene = newSession->session->scene.get();
-    const thread_scoped_lock sceneLock(scene->mutex);
-    ApplyShutter(scene, newSession->shutter);
+    const thread_scoped_lock sceneLock(newSession->session->scene->mutex);
+    newSession->ApplyShutter();
   }
 
   _renderParam = std::move(newSession);
@@ -979,12 +962,21 @@ HdRenderSettingDescriptorList HdCyclesDelegate::GetRenderSettingDescriptors() co
 
 void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS::VtValue &value)
 {
+  /* The render camera, whose shutter applies when no shutter settings come (Houdini's
+   * viewport); it syncs before the geometry (HdCyclesCamera::Sync). */
+  if (key == _tokens->renderCameraPath) {
+    _renderParam->renderCameraPath = value.IsHolding<SdfPath>() ?
+                                         value.UncheckedGet<SdfPath>() :
+                                         SdfPath(VtValue::Cast<std::string>(value).GetWithDefault(
+                                             std::string()));
+  }
   /* The render camera's shutter: geometry and the camera sample their motion across it when
    * they sync, which is after the settings husk sends. */
   if (key == _tokens->shutterOpen || key == _tokens->shutterClose ||
       key == _tokens->disableMotionBlur || key == _tokens->instantaneousShutter)
   {
     HdCyclesShutter &shutter = _renderParam->shutter;
+    shutter.fromSettings = true;
     const bool flag = key == _tokens->disableMotionBlur || key == _tokens->instantaneousShutter;
     const VtValue cast = flag ? VtValue::Cast<bool>(value) : VtValue::Cast<double>(value);
     if (cast.IsEmpty()) {
@@ -1006,19 +998,9 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     else {
       next.instantaneous = cast.UncheckedGet<bool>();
     }
-    /* husk can resend the same shutter every frame; only a change resamples prims. */
-    if (next.open == shutter.open && next.close == shutter.close &&
-        next.disableMotionBlur == shutter.disableMotionBlur &&
-        next.instantaneous == shutter.instantaneous)
-    {
-      return;
+    if (_renderParam->UpdateShutter(next)) {
+      ++_settingsVersion;
     }
-    shutter = next;
-    ++shutter.version;
-    Scene *const scene = _renderParam->session->scene.get();
-    const thread_scoped_lock sceneLock(scene->mutex);
-    ApplyShutter(scene, shutter);
-    ++_settingsVersion;
     return;
   }
 

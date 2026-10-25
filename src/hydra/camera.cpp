@@ -69,8 +69,28 @@ void HdCyclesCamera::Sync(HdSceneDelegate *sceneDelegate,
   HdCameraSchema cameraSchema = HdCameraSchema::GetFromParent(primDs);
   HdContainerDataSourceHandle cameraDs = cameraSchema.GetContainer();
 
+  /* The render camera's shutter, when no host sends one as render settings: husk does,
+   * Houdini's viewport doesn't, and Karma takes the camera's there. Cameras sync before the
+   * geometry, which samples its motion across it. */
+  bool shutterChanged = false;
+  if (*dirtyBits & DirtyBits::DirtyParams) {
+    if (auto ds = cameraSchema.GetShutterOpen()) {
+      _shutterOpen = ds->GetTypedValue(0.0f);
+    }
+    if (auto ds = cameraSchema.GetShutterClose()) {
+      _shutterClose = ds->GetTypedValue(0.0f);
+    }
+    auto *const session = static_cast<HdCyclesSession *>(renderParam);
+    if (!session->shutter.fromSettings && id == session->renderCameraPath) {
+      HdCyclesShutter next = session->shutter;
+      next.open = float(_shutterOpen);
+      next.close = float(_shutterClose);
+      shutterChanged = session->UpdateShutter(next);
+    }
+  }
+
   /* The transform at the frame, and across the render camera's shutter for motion blur. */
-  if (*dirtyBits & DirtyBits::DirtyTransform) {
+  if ((*dirtyBits & DirtyBits::DirtyTransform) || shutterChanged) {
     const HdCyclesShutter &shutter = static_cast<HdCyclesSession *>(renderParam)->shutter;
     _motionTransforms.clear();
     if (auto matrixDs = HdXformSchema::GetFromParent(primDs).GetMatrix()) {

@@ -5,7 +5,9 @@
 
 #include "hydra/session.h"
 #include "hydra/diagnostic.h"
+#include "scene/camera.h"
 #include "scene/film.h"
+#include "scene/integrator.h"
 #include "scene/object.h"
 #include "scene/shader.h"
 // Have to include shader.h before background.h so that 'set_shader' uses the correct 'set'
@@ -191,6 +193,42 @@ HdCyclesSession::~HdCyclesSession()
   if (_ownCyclesSession) {
     delete session;
   }
+}
+
+/* Motion blur is on while the shutter is open; Cycles samples ray times only when the camera's
+ * shutter time is positive. Nothing else sets the integrator's motion_blur, which isn't an
+ * exposed setting (kIntegratorExcluded). Call with the scene locked. */
+void HdCyclesSession::ApplyShutter()
+{
+  Scene *const scene = session->scene.get();
+  scene->integrator->set_motion_blur(shutter.IsOpen());
+  scene->camera->set_shuttertime(shutter.IsOpen() ? shutter.close - shutter.open : 1.0f);
+
+  /* Volume velocity blur advects a grid from the frame by (t - offset) of the shutter, for
+   * ray time t from 0 to 1. Cycles places the frame at offset 0.5 (a centred shutter) or 0 (a
+   * shutter opening at the frame); take the nearer (volumes warn when neither is exact). Its
+   * END position doesn't place the frame at the close. Only the volume kernel reads this. */
+  if (shutter.IsOpen()) {
+    scene->camera->set_motion_position(shutter.VolumeBlurCentred() ? MOTION_POSITION_CENTER :
+                                                                     MOTION_POSITION_START);
+  }
+}
+
+bool HdCyclesSession::UpdateShutter(const HdCyclesShutter &next)
+{
+  /* husk can resend the same shutter every frame; only a change resamples prims. */
+  if (next.open == shutter.open && next.close == shutter.close &&
+      next.disableMotionBlur == shutter.disableMotionBlur &&
+      next.instantaneous == shutter.instantaneous)
+  {
+    return false;
+  }
+  const unsigned int version = shutter.version;
+  shutter = next;
+  shutter.version = version + 1;
+  const thread_scoped_lock sceneLock(session->scene->mutex);
+  ApplyShutter();
+  return true;
 }
 
 void HdCyclesSession::UpdateScene()

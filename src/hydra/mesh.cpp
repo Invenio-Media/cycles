@@ -8,6 +8,7 @@
 #include "hydra/geometry.inl"
 #include "hydra/object_settings.h"
 #include "hydra/util.h"
+#include "scene/camera.h"
 #include "scene/mesh.h"
 
 #include <pxr/base/gf/vec2f.h>
@@ -111,6 +112,51 @@ HdCyclesMesh::HdCyclesMesh(const SdfPath &rprimId)
 
 HdCyclesMesh::~HdCyclesMesh() = default;
 
+void HdCyclesMesh::Sync(HdSceneDelegate *sceneDelegate,
+                        HdRenderParam *renderParam,
+                        HdDirtyBits *dirtyBits,
+                        const TfToken &reprToken)
+{
+  HdCyclesGeometry::Sync(sceneDelegate, renderParam, dirtyBits, reprToken);
+  static_cast<HdCyclesSession *>(renderParam)
+      ->SetPixelDiced(this,
+                      _geom && _geom->get_subdivision_type() != Mesh::SUBDIVISION_NONE &&
+                          !_subdObjectSpace);
+}
+
+/* A factor of 1.5 keeps edges within 1.5 times the dicing rate, or two thirds of it. */
+static constexpr float kRediceFactor = 1.5f;
+
+void HdCyclesMesh::UpdateDicing(Scene *scene)
+{
+  const Camera *camera = scene->dicing_camera;
+  const Transform &tfm = _instances[0]->get_tfm();
+  const float3 center = transform_point(&tfm, _boundsCenter);
+  const float scale = (len(transform_direction(&tfm, make_float3(1.0f, 0.0f, 0.0f))) +
+                       len(transform_direction(&tfm, make_float3(0.0f, 1.0f, 0.0f))) +
+                       len(transform_direction(&tfm, make_float3(0.0f, 0.0f, 1.0f)))) /
+                      3.0f;
+  /* An orthographic camera sees the same size at any distance; its view plane is in world
+   * units. */
+  const float depth = camera->get_camera_type() == CAMERA_ORTHOGRAPHIC ?
+                          camera->viewplane.top - camera->viewplane.bottom :
+                          len(center - transform_get_column(&camera->get_matrix(), 3));
+  const float size = _boundsRadius * scale / std::max(depth, 1e-6f);
+
+  if (!_geom->need_tesselation()) {
+    if (_dicedSize > 0.0f && size < _dicedSize * kRediceFactor &&
+        size * kRediceFactor > _dicedSize)
+    {
+      return;
+    }
+    /* A moved camera leaves the transform as it was, so dicing has to be asked for. */
+    _geom->tag_subd_dicing_rate_modified();
+    _geom->tag_update(scene, true);
+  }
+  _geom->set_subd_objecttoworld(tfm);
+  _dicedSize = size;
+}
+
 HdDirtyBits HdCyclesMesh::GetInitialDirtyBitsMask() const
 {
   HdDirtyBits bits = HdCyclesGeometry::GetInitialDirtyBitsMask();
@@ -173,13 +219,13 @@ void HdCyclesMesh::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyBit
     PopulatePrimvars(sceneDelegate);
   }
 
-  /* Also when the mesh moves: pixel-space dicing projects it through its transform. */
-  if (settingsDirty || HdChangeTracker::IsTransformDirty(dirtyBits, GetId())) {
+  if (settingsDirty) {
     ApplySubdivisionSettings();
   }
 
   /* A re-tessellated subdivision mesh can have a different number of triangles, so its BVH is
-   * rebuilt, not refit: new dicing settings, a move or new points re-tessellate it. */
+   * rebuilt, not refit: new dicing settings or new points re-tessellate it. A move only
+   * re-tessellates it when it changes the mesh's size on screen enough (UpdateDicing). */
   rebuild = (_geom->triangles_is_modified()) || (_geom->subd_start_corner_is_modified()) ||
             (_geom->subd_num_corners_is_modified()) || (_geom->subd_shader_is_modified()) ||
             (_geom->subd_smooth_is_modified()) || (_geom->subd_ptex_offset_is_modified()) ||
@@ -210,6 +256,13 @@ void HdCyclesMesh::PopulatePoints(HdSceneDelegate *sceneDelegate)
   std::copy_n(reinterpret_cast<const packed_float3 *>(points.data()), numPoints, verts);
   ApplyPointsMotion(attr_P, samples, numPoints);
   _geom->tag_position_modified();
+
+  BoundBox bounds = BoundBox::empty;
+  for (size_t i = 0; i < numPoints; ++i) {
+    bounds.grow(make_float3(points[i][0], points[i][1], points[i][2]));
+  }
+  _boundsCenter = bounds.valid() ? bounds.center() : zero_float3();
+  _boundsRadius = bounds.valid() ? 0.5f * len(bounds.size()) : 0.0f;
 }
 
 void HdCyclesMesh::PopulateNormals(HdSceneDelegate *sceneDelegate)
@@ -677,18 +730,19 @@ void HdCyclesMesh::ApplySubdivisionSettings()
     return;
   }
   /* Pixel-space dicing measures edges from the dicing camera, which follows the render
-   * camera (HdCyclesRenderPass). Cycles re-dices when these change. */
+   * camera (HdCyclesRenderPass), through the transform UpdateDicing sets. */
   _geom->set_subd_dicing_rate(_subdDicingRate);
   _geom->set_subd_max_level(_topology.GetRefineLevel());
   _geom->set_subd_adaptive_space(_subdObjectSpace ? Mesh::SUBDIVISION_ADAPTIVE_SPACE_OBJECT :
                                                     Mesh::SUBDIVISION_ADAPTIVE_SPACE_PIXEL);
-  _geom->set_subd_objecttoworld(_instances[0]->get_tfm());
 }
 
 void HdCyclesMesh::Finalize(PXR_NS::HdRenderParam *renderParam)
 {
+  static_cast<HdCyclesSession *>(renderParam)->SetPixelDiced(this, false);
   _topology = HdMeshTopology();
   _primitiveParams.clear();
+  _dicedSize = 0.0f;
 
   HdCyclesGeometry<PXR_NS::HdMesh, Mesh>::Finalize(renderParam);
 }

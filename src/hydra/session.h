@@ -12,6 +12,7 @@
 #include "util/thread.h"
 
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <pxr/base/gf/vec2i.h>
@@ -20,6 +21,8 @@
 #include <pxr/imaging/hd/renderDelegate.h>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
+
+class HdCyclesMesh;
 
 struct SceneLock {
   SceneLock(const PXR_NS::HdRenderParam *renderParam);
@@ -64,6 +67,9 @@ struct HdCyclesShutter {
   float close = 0.0f;
   bool disableMotionBlur = false;
   bool instantaneous = false;
+  // Set once a host sends the shutter as render settings, as husk does. Houdini's viewport
+  // doesn't, and the render pass then takes the render camera's.
+  bool fromSettings = false;
   // Bumped on every change, so the render pass can resample prims that synced before it.
   unsigned int version = 0;
 
@@ -103,6 +109,13 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   }
 
   void UpdateScene();
+
+  // Applies a new render camera shutter and returns whether it changed; prims resample their
+  // motion across it when they next sync. From the shutter render settings husk sends, or from
+  // the render camera, which syncs before them, when a host sends none (Houdini's viewport).
+  bool UpdateShutter(const HdCyclesShutter &next);
+  // Sets Cycles' motion blur from the shutter. Call with the scene locked.
+  void ApplyShutter();
 
   double GetStageMetersPerUnit() const
   {
@@ -161,6 +174,25 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
     _dataWindowOrigin = origin;
   }
 
+  // Meshes subdivided with pixel-space dicing, which the render pass re-dices when they or the
+  // camera move far enough (HdCyclesMesh::UpdateDicing). Meshes add and remove themselves as
+  // they sync, which Hydra does in parallel; the render pass reads the set between syncs.
+  void SetPixelDiced(HdCyclesMesh *mesh, const bool diced)
+  {
+    const CCL_NS::thread_scoped_lock lock(_pixelDicedMutex);
+    if (diced) {
+      _pixelDiced.insert(mesh);
+    }
+    else {
+      _pixelDiced.erase(mesh);
+    }
+  }
+
+  const std::unordered_set<HdCyclesMesh *> &PixelDicedMeshes() const
+  {
+    return _pixelDiced;
+  }
+
   CCL_NS::Session *session;
   bool keep_nodes;
 
@@ -177,6 +209,9 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   // Set by husk; geometry and the camera sample their motion across it.
   HdCyclesShutter shutter;
 
+  // The render camera, which Houdini's viewport and husk name in the renderCameraPath setting.
+  PXR_NS::SdfPath renderCameraPath;
+
  private:
   const bool _ownCyclesSession;
   double _stageMetersPerUnit = 0.01;
@@ -185,6 +220,8 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   PXR_NS::HdRenderPassAovBinding _displayAovBinding;
   PXR_NS::GfVec2i _dataWindowOrigin = PXR_NS::GfVec2i(0);
   mutable CCL_NS::thread_mutex _aovMutex;
+  std::unordered_set<HdCyclesMesh *> _pixelDiced;
+  CCL_NS::thread_mutex _pixelDicedMutex;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

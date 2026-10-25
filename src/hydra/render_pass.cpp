@@ -5,6 +5,7 @@
 
 #include "hydra/render_pass.h"
 #include "hydra/camera.h"
+#include "hydra/mesh.h"
 #include "hydra/output_driver.h"
 #include "hydra/render_buffer.h"
 #include "hydra/render_delegate.h"
@@ -93,9 +94,13 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
     return;  // Something went wrong and cannot continue without recreating the session
   }
 
+  auto *const renderDelegate = static_cast<HdCyclesDelegate *>(
+      GetRenderIndex()->GetRenderDelegate());
+
   /* Prims sample their motion across the shutter when they sync. husk sends the shutter before
-   * the first sync; one that changes after it resamples every prim, and the render camera, on
-   * the next sync. Volumes load their velocity grid only while the shutter is open. */
+   * the first sync, and the viewport's render camera syncs before the geometry; a shutter that
+   * changes after the geometry synced resamples every prim, and the render camera, on the next
+   * sync. Volumes load their velocity grid only while the shutter is open. */
   const unsigned int shutterVersion = _renderParam->shutter.version;
   if (_shutterVersion && *_shutterVersion != shutterVersion) {
     HdChangeTracker &tracker = GetRenderIndex()->GetChangeTracker();
@@ -108,9 +113,6 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
   _shutterVersion = shutterVersion;
 
   if (scene->mutex.try_lock()) {
-    auto *const renderDelegate = static_cast<HdCyclesDelegate *>(
-        GetRenderIndex()->GetRenderDelegate());
-
     const unsigned int settingsVersion = renderDelegate->GetRenderSettingsVersion();
 
     // Update requested AOV bindings
@@ -163,8 +165,8 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
     }
 
     /* The dicing camera is the render camera, as in Blender: adaptive subdivision measures its
-     * dicing rate in pixels as this camera sees them. Cycles re-dices only when a mesh changes,
-     * so a moving camera doesn't re-dice. */
+     * dicing rate in pixels as this camera sees them. Meshes re-dice when it or they move far
+     * enough to change their size on screen (HdCyclesMesh::UpdateDicing). */
     for (Camera *const cam : {scene->camera, scene->dicing_camera}) {
       if (const auto *const camera = static_cast<const HdCyclesCamera *>(
               renderPassState->GetCamera()))
@@ -179,6 +181,9 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
                                             windowPolicy,
                                             cam);
       }
+    }
+    for (HdCyclesMesh *const mesh : _renderParam->PixelDicedMeshes()) {
+      mesh->UpdateDicing(scene);
     }
 
     // Reset session if the session, scene, camera or AOV bindings changed
