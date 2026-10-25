@@ -36,6 +36,9 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
 const std::unordered_map<TfToken, PassType, TfToken::HashFunctor> kAovToPass = {
     {HdAovTokens->color, PASS_COMBINED},
     {TfToken("C"), PASS_COMBINED},
+    /* The light path expression for all light reaching the camera: husk's beauty when a stage
+     * has no render settings, and Karma's. */
+    {TfToken("C.*[LO]"), PASS_COMBINED},
     {HdAovTokens->depth, PASS_DEPTH},
     {HdAovTokens->normal, PASS_NORMAL},
     {TfToken("N"), PASS_NORMAL},

@@ -380,13 +380,12 @@ void HdCyclesMesh::PopulateTopology(HdSceneDelegate *sceneDelegate)
   const HdLegacyDisplayStyleSchema displayStyleSchema = HdLegacyDisplayStyleSchema::GetFromParent(
       prim.dataSource);
 
-  int refineLevel = 0;
-  if (auto ds = displayStyleSchema.GetRefineLevel()) {
-    refineLevel = ds->GetTypedValue(0.0f);
-  }
-  if (_subdMaxLevel >= 0) {
-    refineLevel = _subdMaxLevel;
-  }
+  /* Subdivision levels: primvars:cycles:object:subdivision:max_level, or 8. Hydra's display
+   * refine level is a rasteriser's hint that hosts set unlike each other: husk passes 8,
+   * Houdini's viewport 0, which rendered subdivision surfaces as their cages there. Karma
+   * subdivides the same in both, and so does this. */
+  constexpr int kDefaultMaxLevel = 8;
+  const int refineLevel = _subdMaxLevel >= 0 ? _subdMaxLevel : kDefaultMaxLevel;
   bool flatShadingEnabled = false;
   if (auto ds = displayStyleSchema.GetFlatShadingEnabled()) {
     flatShadingEnabled = ds->GetTypedValue(0.0f);
@@ -650,7 +649,7 @@ bool HdCyclesMesh::ReadSubdivisionSettings(HdSceneDelegate *sceneDelegate)
   const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(
       GetPrim(sceneDelegate, GetId()).dataSource);
 
-  /* Unauthored, or not an int, leaves Hydra's refine level. Blender's largest level bounds it;
+  /* Unauthored, or not an int, leaves the default of 8. Blender's largest level bounds it;
    * the dicing rate bounds the tessellation well before that. */
   const VtValue maxLevel = ReadPrimvar(primvars, _tokens->maxLevel);
   int level = HdCyclesSettingValue<int>(maxLevel, -1);

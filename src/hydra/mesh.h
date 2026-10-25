@@ -46,8 +46,8 @@ class HdCyclesMesh final : public HdCyclesGeometry<PXR_NS::HdMesh, CCL_NS::Mesh>
   PXR_NS::VtIntArray _primitiveParams;
   // The display style's flat shading, kept for PopulateNormals, which sets the smooth flags.
   bool _flatShading = false;
-  // The subdivision settings: an authored max_level replaces the display style's refine
-  // level (-1 when unauthored); the dicing rate is in pixels, or object units in object space.
+  // The subdivision settings: an authored max_level replaces the default of 8 levels (-1 when
+  // unauthored); the dicing rate is in pixels, or object units in object space.
   int _subdMaxLevel = -1;
   float _subdDicingRate = 1.0f;
   bool _subdObjectSpace = false;
