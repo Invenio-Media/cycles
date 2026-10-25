@@ -100,6 +100,21 @@ void ApplyPrimvars(AttributeSet &attributes,
                    AttributeElement elem,
                    AttributeStandard std)
 {
+  /* A constant primvar authored as a scalar, such as float primvars:x = 0.3, holds no array:
+   * one element, so the attribute gets its data. */
+  if (value.IsHolding<float>()) {
+    value = VtValue(VtFloatArray(1, value.UncheckedGet<float>()));
+  }
+  else if (value.IsHolding<GfVec2f>()) {
+    value = VtValue(VtVec2fArray(1, value.UncheckedGet<GfVec2f>()));
+  }
+  else if (value.IsHolding<GfVec3f>()) {
+    value = VtValue(VtVec3fArray(1, value.UncheckedGet<GfVec3f>()));
+  }
+  else if (value.IsHolding<GfVec4f>()) {
+    value = VtValue(VtVec4fArray(1, value.UncheckedGet<GfVec4f>()));
+  }
+
   const void *data = HdGetValueData(value);
   size_t size = value.GetArraySize();
 

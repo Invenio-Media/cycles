@@ -90,6 +90,9 @@ TF_DEFINE_PRIVATE_TOKENS(CyclesMaterialTokens,
     (opacity)
     (metallic)
     (file)
+    (translation)
+    (rotation)
+    ((in, "in"))
     ((autoColorSpace, "auto"))
 );
 // clang-format on
@@ -138,13 +141,15 @@ class UsdToCyclesMapping {
         return "color";
       }
 
+      /* A UsdPrimvarReader's result, from Cycles' attribute node: its scalar output is Fac,
+       * as its Alpha is 1 for float and float2 attributes. */
       if (name == CyclesMaterialTokens->result) {
         switch (inputConnection->socket_type.type) {
           case SocketType::BOOLEAN:
           case SocketType::FLOAT:
           case SocketType::INT:
           case SocketType::UINT:
-            return "alpha";
+            return "fac";
           case SocketType::COLOR:
           case SocketType::VECTOR:
           case SocketType::POINT:
@@ -245,6 +250,43 @@ class UsdToCyclesTexture : public UsdToCyclesMapping {
   }
 };
 
+/* UsdTransform2d: result = translation + rotate(rotation) (scale * in), turning counter-clockwise
+ * by degrees: Cycles' point mapping, with the plane's vectors and a rotation about Z. */
+class UsdToCyclesTransform2d : public UsdToCyclesMapping {
+ public:
+  using UsdToCyclesMapping::UsdToCyclesMapping;
+
+  void initializeNode(ShaderNode *node) const override
+  {
+    if (const SocketType *input = node->type->find_input(ustring("mapping_type"))) {
+      SetNodeValue(node, *input, VtValue(TfToken("point")));
+    }
+  }
+
+  std::string parameterName(const TfToken &name,
+                            const ShaderInput *inputConnection,
+                            VtValue *value) const override
+  {
+    if (inputConnection && name == CyclesMaterialTokens->result) {
+      return "vector";
+    }
+    if (value && !value->IsEmpty()) {
+      if (name == CyclesMaterialTokens->rotation) {
+        const float degrees = VtValue::Cast<float>(*value).GetWithDefault(0.0f);
+        *value = VtValue(GfVec3f(0.0f, 0.0f, degrees * float(M_PI / 180.0)));
+      }
+      else if (name == CyclesMaterialTokens->in || name == CyclesMaterialTokens->translation ||
+               name == CyclesMaterialTokens->scale)
+      {
+        /* Float2 into the plane, scale keeping Z. */
+        const GfVec2f v = VtValue::Cast<GfVec2f>(*value).GetWithDefault(GfVec2f(0.0f));
+        *value = VtValue(GfVec3f(v[0], v[1], name == CyclesMaterialTokens->scale ? 1.0f : 0.0f));
+      }
+    }
+    return UsdToCyclesMapping::parameterName(name, inputConnection, value);
+  }
+};
+
 class UsdToCyclesPreviewSurface : public UsdToCyclesMapping {
  public:
   using UsdToCyclesMapping::UsdToCyclesMapping;
@@ -335,6 +377,10 @@ class UsdToCycles {
       }};
   const UsdToCyclesMapping UsdPrimvarReader = {"attribute",
                                                {{TfToken("varname"), ustring("attribute")}}};
+  const UsdToCyclesTransform2d UsdTransform2d = {
+      "mapping",
+      {{CyclesMaterialTokens->in, ustring("vector")},
+       {CyclesMaterialTokens->translation, ustring("location")}}};
 
  public:
   const UsdToCyclesMapping *findUsd(const TfToken &usdNodeType)
@@ -352,6 +398,9 @@ class UsdToCycles {
         usdNodeType == CyclesMaterialTokens->UsdPrimvarReader_int)
     {
       return &UsdPrimvarReader;
+    }
+    if (usdNodeType == CyclesMaterialTokens->UsdTransform2d) {
+      return &UsdTransform2d;
     }
 
     return nullptr;
@@ -371,6 +420,12 @@ class UsdToCycles {
   const UsdToCyclesMapping *uvTextureMapping() const
   {
     return &UsdUVTexture;
+  }
+
+  /* Expose the UsdTransform2d mapping pointer for identity checks. */
+  const UsdToCyclesMapping *transform2dMapping() const
+  {
+    return &UsdTransform2d;
   }
 };
 TfStaticData<UsdToCycles> sUsdToCyles;
@@ -811,6 +866,22 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
       ShaderInput *remapIn = nodeDesc.normalRemap->input("Vector1");
       if (ShaderOutput *out = upstreamOutput(remapIn)) {
         shaderGraph->connect(out, remapIn);
+      }
+      continue;
+    }
+
+    /* UsdTransform2d.rotation, connected: degrees about Z, into the mapping's Euler angles. */
+    if (nodeDesc.mapping == sUsdToCyles->transform2dMapping() &&
+        dstSocketName == CyclesMaterialTokens->rotation)
+    {
+      MathNode *radians = shaderGraph->create_node<MathNode>();
+      radians->set_math_type(NODE_MATH_MULTIPLY);
+      radians->set_value2(float(M_PI / 180.0));
+      if (ShaderOutput *out = upstreamOutput(radians->input("Value1"))) {
+        CombineXYZNode *euler = shaderGraph->create_node<CombineXYZNode>();
+        shaderGraph->connect(out, radians->input("Value1"));
+        shaderGraph->connect(radians->output("Value"), euler->input("Z"));
+        shaderGraph->connect(euler->output("Vector"), nodeDesc.node->input("Rotation"));
       }
       continue;
     }
