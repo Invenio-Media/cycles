@@ -14,11 +14,15 @@
 #include <pxr/base/gf/vec4d.h>
 #include <pxr/base/gf/vec4f.h>
 #include <pxr/imaging/hd/dataSourceMaterialNetworkInterface.h>
+#include <pxr/imaging/hdMtlx/hdMtlx.h>
 #include <pxr/usd/sdr/registry.h>
 #include <pxr/usd/sdr/shaderNode.h>
 #include <pxr/usd/sdr/shaderProperty.h>
 
+#include <MaterialXCore/Document.h>
+
 #include <cmath>
+#include <deque>
 #include <map>
 #include <optional>
 #include <set>
@@ -65,6 +69,49 @@ bool IsVector(const VtValue &value)
 }
 
 GfVec3f ToVec3(const VtValue &value);
+
+namespace mx = MaterialX;
+
+/* A MaterialX value as USD holds it. */
+VtValue FromMtlx(const mx::ValuePtr &value)
+{
+  if (!value) {
+    return VtValue();
+  }
+  if (value->isA<float>()) {
+    return VtValue(value->asA<float>());
+  }
+  if (value->isA<int>()) {
+    return VtValue(value->asA<int>());
+  }
+  if (value->isA<bool>()) {
+    return VtValue(value->asA<bool>());
+  }
+  if (value->isA<mx::Vector2>()) {
+    const mx::Vector2 &v = value->asA<mx::Vector2>();
+    return VtValue(GfVec2f(v[0], v[1]));
+  }
+  if (value->isA<mx::Vector3>()) {
+    const mx::Vector3 &v = value->asA<mx::Vector3>();
+    return VtValue(GfVec3f(v[0], v[1], v[2]));
+  }
+  if (value->isA<mx::Color3>()) {
+    const mx::Color3 &v = value->asA<mx::Color3>();
+    return VtValue(GfVec3f(v[0], v[1], v[2]));
+  }
+  if (value->isA<mx::Vector4>()) {
+    const mx::Vector4 &v = value->asA<mx::Vector4>();
+    return VtValue(GfVec4f(v[0], v[1], v[2], v[3]));
+  }
+  if (value->isA<mx::Color4>()) {
+    const mx::Color4 &v = value->asA<mx::Color4>();
+    return VtValue(GfVec4f(v[0], v[1], v[2], v[3]));
+  }
+  if (value->isA<std::string>()) {
+    return VtValue(value->asA<std::string>());
+  }
+  return VtValue();
+}
 
 float ToFloat(const VtValue &value)
 {
@@ -286,6 +333,8 @@ class MaterialXTranslator {
   std::unordered_map<TfToken, Operand, TfToken::HashFunctor> _inputs;
   /* Its inputs that are connected, or authored with a value other than the default. */
   std::set<TfToken> _setInputs;
+  /* Its inputs authored with a value, whatever it is. */
+  std::set<TfToken> _authoredInputs;
   TfToken _fileColorSpace;
   int _helpers = 0;
 
@@ -301,6 +350,7 @@ class MaterialXTranslator {
 
   void ReadInputs(const SdrShaderNodeConstPtr &sdrNode);
   void ClearNode();
+  bool Expand(std::deque<TfToken> &queue);
   bool TranslateNode(const std::string &family);
   void Write(const TfToken &node, const TfToken &input, const Operand &value);
   void Rewire();
@@ -496,6 +546,7 @@ void MaterialXTranslator::ReadInputs(const SdrShaderNodeConstPtr &sdrNode)
 {
   _inputs.clear();
   _setInputs.clear();
+  _authoredInputs.clear();
   for (const TfToken &name : sdrNode->GetShaderInputNames()) {
     const auto connections = _network.GetNodeInputConnection(_node, name);
     if (!connections.empty()) {
@@ -506,6 +557,7 @@ void MaterialXTranslator::ReadInputs(const SdrShaderNodeConstPtr &sdrNode)
     const SdrShaderPropertyConstPtr input = sdrNode->GetShaderInput(name);
     VtValue value = _network.GetNodeParameterValue(_node, name);
     if (!value.IsEmpty()) {
+      _authoredInputs.insert(name);
       /* Compared as Cycles takes them, so a double authored at a float default is unset. */
       if (!input || ToCycles(value) != ToCycles(input->GetDefaultValue())) {
         _setInputs.insert(name);
@@ -1161,6 +1213,75 @@ bool MaterialXTranslator::TranslateNode(const std::string &family)
                 vector));
     return true;
   }
+  if (family == "rotate2d" || family == "rotate3d") {
+    /* MaterialX turns the vector by amount degrees clockwise: rotate2d about Z (x cos + y sin,
+     * y cos - x sin), rotate3d about its axis (its rotation matrix applied to a row vector).
+     * Cycles' rotation, inverted. */
+    const TfToken node = _node;
+    SetType(node, "vector_rotate");
+    if (family == "rotate2d") {
+      SetValue(node, "rotate_type", VtValue(TfToken("z_axis")));
+    }
+    else {
+      SetValue(node, "rotate_type", VtValue(TfToken("axis")));
+      Set(node, "axis", In("axis"));
+    }
+    SetValue(node, "invert", VtValue(true));
+    Set(node, "vector", In("in"));
+    Set(node,
+        "angle",
+        Math("multiply",
+             AsFloat(In("amount")),
+             Operand::Constant(VtValue(float(M_PI / 180.0))),
+             false));
+    Provide("out", Operand::Output(node, "vector"));
+    return true;
+  }
+  if (family == "switch") {
+    /* which picks in1 to in10, from 0. A constant picks one; a connected which steps through
+     * them, each taking over where which reaches its index. */
+    const auto input = [this](const int index) {
+      return In(("in" + std::to_string(index + 1)).c_str());
+    };
+    const Operand &which = In("which");
+    if (!which.connection) {
+      Provide("out", input(std::clamp(int(ConstantFloat("which", 0.0f)), 0, 9)));
+      return true;
+    }
+    const bool vector = !IsFloatType();
+    Operand out = input(0);
+    for (int index = 1; index < 10; ++index) {
+      if (!_inputs.count(TfToken("in" + std::to_string(index + 1)))) {
+        continue;
+      }
+      out = Mix(out,
+                input(index),
+                Math("greater_than",
+                     AsFloat(which),
+                     Operand::Constant(VtValue(float(index) - 0.5f)),
+                     false),
+                vector);
+    }
+    Provide("out", out);
+    return true;
+  }
+  if (family == "hsvtorgb" || family == "rgbtohsv") {
+    /* OSL's HSV, as MaterialX's implementations use, is Cycles': hue, saturation and value
+     * from 0 to 1. A color4's alpha isn't carried, as elsewhere in this translation. */
+    const bool toRgb = family == "hsvtorgb";
+    const Operand &in = In("in");
+    const TfToken separate = AddNode("separate_color");
+    SetValue(separate, "color_type", VtValue(TfToken(toRgb ? "rgb" : "hsv")));
+    Set(separate, "color", in);
+    const TfToken combine = _node;
+    SetType(combine, "combine_color");
+    SetValue(combine, "color_type", VtValue(TfToken(toRgb ? "hsv" : "rgb")));
+    for (const char *channel : {"r", "g", "b"}) {
+      Set(combine, channel, Operand::Output(separate, channel));
+    }
+    Provide("out", Operand::Output(combine, "color"));
+    return true;
+  }
   return false;
 }
 
@@ -1241,12 +1362,119 @@ void MaterialXTranslator::Rewire()
   }
 }
 
+/* A node MaterialX defines as a graph of other nodes, which has no translation of its own: the
+ * graph's nodes join the network in its place, named after it, for the translation to take in
+ * turn, and its outputs become theirs. Inputs the graph binds to the node's take what the node
+ * was given; those MaterialX binds to geometry, such as UV0, take that geometry's node. */
+bool MaterialXTranslator::Expand(std::deque<TfToken> &queue)
+{
+  const mx::DocumentPtr &library = HdMtlxStdLibraries();
+  const mx::NodeDefPtr definition = library ? library->getNodeDef(_nodeDefinition.GetString()) :
+                                              nullptr;
+  const mx::InterfaceElementPtr implementation = definition ? definition->getImplementation() :
+                                                              nullptr;
+  const mx::NodeGraphPtr graph = implementation ? implementation->asA<mx::NodeGraph>() : nullptr;
+  if (!graph) {
+    return false;
+  }
+  const std::vector<mx::NodePtr> nodes = graph->getNodes();
+  for (const mx::NodePtr &inner : nodes) {
+    if (!inner->getNodeDef()) {
+      return false;
+    }
+  }
+  const auto innerName = [this](const std::string &name) {
+    return TfToken(_node.GetString() + "__" + name);
+  };
+  const auto connect =
+      [this](const TfToken &node, const TfToken &input, const InputConnection &connection) {
+        _network.SetNodeInputConnection(node, input, {connection});
+      };
+
+  for (const mx::NodePtr &inner : nodes) {
+    const TfToken name = innerName(inner->getName());
+    _network.SetNodeType(name, TfToken(inner->getNodeDef()->getName()));
+    for (const mx::InputPtr &input : inner->getInputs()) {
+      const TfToken inputName(input->getName());
+      if (!input->getNodeName().empty()) {
+        const std::string &output = input->getOutputString();
+        connect(name,
+                inputName,
+                {innerName(input->getNodeName()), TfToken(output.empty() ? "out" : output)});
+        continue;
+      }
+      const std::string &interfaceName = input->getInterfaceName();
+      if (interfaceName.empty()) {
+        if (const VtValue value = FromMtlx(input->getValue()); !value.IsEmpty()) {
+          _network.SetNodeParameterValue(name, inputName, value);
+        }
+        continue;
+      }
+      const Operand &outer = In(interfaceName.c_str());
+      /* Bound to geometry when left unauthored, e.g. UV0 (texcoord, index 0) or Pobject
+       * (position, object space); Sdr may give such an input a default value instead. */
+      const mx::InputPtr bound = definition->getActiveInput(interfaceName);
+      const mx::GeomPropDefPtr geometry = bound && !bound->getDefaultGeomPropString().empty() ?
+                                              library->getGeomPropDef(
+                                                  bound->getDefaultGeomPropString()) :
+                                              nullptr;
+      if (outer.connection) {
+        connect(name, inputName, *outer.connection);
+      }
+      else if (geometry && !_authoredInputs.count(TfToken(interfaceName))) {
+        const TfToken source = innerName(inner->getName() + "_" + interfaceName);
+        _network.SetNodeType(source,
+                             TfToken("ND_" + geometry->getGeomProp() + "_" + bound->getType()));
+        if (!geometry->getSpace().empty()) {
+          _network.SetNodeParameterValue(source, TfToken("space"), VtValue(geometry->getSpace()));
+        }
+        if (geometry->hasIndex()) {
+          _network.SetNodeParameterValue(
+              source, TfToken("index"), VtValue(std::stoi(geometry->getIndex())));
+        }
+        connect(name, inputName, {source, TfToken("out")});
+        queue.push_back(source);
+      }
+      else if (!outer.constant.IsEmpty()) {
+        _network.SetNodeParameterValue(name, inputName, outer.constant);
+      }
+      else if (bound) {
+        /* The outer definition's default, not the inner node's. */
+        if (const VtValue value = FromMtlx(bound->getValue()); !value.IsEmpty()) {
+          _network.SetNodeParameterValue(name, inputName, value);
+        }
+      }
+    }
+    queue.push_back(name);
+  }
+
+  for (const mx::OutputPtr &output : graph->getOutputs()) {
+    if (!output->getNodeName().empty()) {
+      const std::string &from = output->getOutputString();
+      Provide(output->getName().c_str(),
+              Operand::Output(innerName(output->getNodeName()),
+                              (from.empty() ? std::string("out") : from).c_str()));
+    }
+    else if (!output->getInterfaceName().empty()) {
+      Provide(output->getName().c_str(), In(output->getInterfaceName().c_str()));
+    }
+  }
+  return true;
+}
+
 void MaterialXTranslator::Translate()
 {
   SdrRegistry &registry = SdrRegistry::GetInstance();
   std::set<std::string> untranslatedTypes;
 
-  for (const TfToken &node : _network.GetNodeNames()) {
+  /* The network's nodes, then the nodes of graphs expanded in their place. A graph's nodes can
+   * be graphs themselves; the expansions are bounded in case a library loops. */
+  const TfTokenVector names = _network.GetNodeNames();
+  std::deque<TfToken> queue(names.begin(), names.end());
+  int expansions = 0;
+  while (!queue.empty()) {
+    const TfToken node = queue.front();
+    queue.pop_front();
     const TfToken type = _network.GetNodeType(node);
     if (!type.GetString().starts_with("ND_")) {
       continue;
@@ -1288,8 +1516,13 @@ void MaterialXTranslator::Translate()
     ReadInputs(sdrNode);
     ClearNode();
     if (!TranslateNode(family)) {
-      untranslatedTypes.insert(type.GetString());
-      _untranslated.insert(node);
+      if (expansions < 1024 && Expand(queue)) {
+        ++expansions;
+      }
+      else {
+        untranslatedTypes.insert(type.GetString());
+        _untranslated.insert(node);
+      }
       _network.DeleteNode(node);
     }
     /* A node translated into helper nodes alone goes. */

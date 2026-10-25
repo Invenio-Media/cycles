@@ -30,8 +30,8 @@ if(HOUDINI_ROOT AND EXISTS ${HOUDINI_ROOT})
     REGEX "^#define HAPI_VERSION_HOUDINI_MAJOR[ \t].*$")
   string(REGEX MATCHALL "[0-9]+" HOUDINI_VERSION_MAJOR ${_houdini_version_major})
 
-  # USD
-  set(USD_LIBRARIES hd hdsi hgi hgiGL gf arch garch plug tf trace vt work sdf cameraUtil hf pxOsd usd usdImaging usdGeom python sdr)
+  # USD. hdMtlx gives the MaterialX translation the standard library documents Houdini loads.
+  set(USD_LIBRARIES hd hdsi hdMtlx hgi hgiGL gf arch garch plug tf trace vt work sdf cameraUtil hf pxOsd usd usdImaging usdGeom python sdr)
   # The MaterialX translation reads node definitions from Sdr, whose nodes derive from Ndr's
   # until USD 25.08 merged Ndr into Sdr (Houdini 22).
   find_library(_pxr_ndr NAMES pxr_ndr PATHS ${_library_dir} NO_DEFAULT_PATH)
@@ -214,7 +214,7 @@ if(HOUDINI_ROOT AND EXISTS ${HOUDINI_ROOT})
   if(_materialx_core_library AND _materialx_format_library AND _materialx_render_library AND 
     _materialx_genglsl_library AND _materialx_genmsl_library)
     list(APPEND USD_LIBRARIES
-      ${_materialx_library}
+      ${_materialx_core_library}
       ${_materialx_format_library}
       ${_materialx_render_library}
       ${_materialx_genglsl_library}
@@ -222,7 +222,11 @@ if(HOUDINI_ROOT AND EXISTS ${HOUDINI_ROOT})
     )
     set(USD_OVERRIDE_MATERIALX ON)
   endif()
-  unset(_materialx_library CACHE)
+  unset(_materialx_core_library CACHE)
+  unset(_materialx_format_library CACHE)
+  unset(_materialx_render_library CACHE)
+  unset(_materialx_genglsl_library CACHE)
+  unset(_materialx_genmsl_library CACHE)
 
   # Cleanup
   unset(_library_dir)
