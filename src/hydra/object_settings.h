@@ -41,4 +41,8 @@ template<typename T> T HdCyclesSettingValue(const PXR_NS::VtValue &value, const 
   return PXR_NS::VtValue::Cast<T>(value).template GetWithDefault<T>(fallback);
 }
 
+/* Whether primvars:cycles:object:volume:space, as read, is "object", where a volume's step and
+ * density are per object unit; anything else is world space. Authored as a token or string. */
+bool HdCyclesVolumeObjectSpace(const PXR_NS::VtValue &space);
+
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

@@ -55,4 +55,9 @@ void HdCyclesApplyObjectSettings(Object *object,
   object->set_lightgroup(ustring(ReadString(read("lightgroup"))));
 }
 
+bool HdCyclesVolumeObjectSpace(const VtValue &space)
+{
+  return ReadString(space) == "object";
+}
+
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

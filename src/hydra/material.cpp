@@ -1304,7 +1304,15 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
       continue;
     }
 
-    ShaderOutput *const output = outputName ? node->output(outputName) : nullptr;
+    /* Case-insensitively, as connections between nodes resolve: a native network may name
+     * Principled Volume's output "volume". */
+    ShaderOutput *output = nullptr;
+    for (ShaderOutput *out : node->outputs) {
+      if (outputName && string_iequals(out->socket_type.name.string(), outputName)) {
+        output = out;
+        break;
+      }
+    }
     if (!output) {
       HDCYCLES_ERROR("Could not find terminal output '%s.%s'",
                      upstreamNodePath.GetText(),

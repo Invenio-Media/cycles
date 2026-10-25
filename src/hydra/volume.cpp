@@ -87,10 +87,7 @@ void HdCyclesVolume::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyB
   {
     const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(
         GetPrim(sceneDelegate, GetId()).dataSource);
-    const VtValue space = ReadPrimvar(primvars, _tokens->space);
-    const bool objectSpace = (space.IsHolding<TfToken>() ?
-                                  space.UncheckedGet<TfToken>().GetString() :
-                                  HdCyclesSettingValue<std::string>(space, "")) == "object";
+    const bool objectSpace = HdCyclesVolumeObjectSpace(ReadPrimvar(primvars, _tokens->space));
     const float stepSize = std::max(
         HdCyclesSettingValue<float>(ReadPrimvar(primvars, _tokens->stepSize), 0.0f), 0.0f);
     _geom->set_object_space(objectSpace);
