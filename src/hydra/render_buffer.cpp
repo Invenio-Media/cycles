@@ -28,6 +28,14 @@ void HdCyclesRenderBuffer::Finalize(HdRenderParam *renderParam)
   HdRenderBuffer::Finalize(renderParam);
 }
 
+void HdCyclesRenderBuffer::Sync(HdSceneDelegate *sceneDelegate,
+                                HdRenderParam *renderParam,
+                                HdDirtyBits *dirtyBits)
+{
+  const thread_scoped_lock lock(static_cast<HdCyclesSession *>(renderParam)->GetAovMutex());
+  HdRenderBuffer::Sync(sceneDelegate, renderParam, dirtyBits);
+}
+
 bool HdCyclesRenderBuffer::Allocate(const GfVec3i &dimensions,
                                     HdFormat format,
                                     bool /*multiSampled*/)
@@ -37,9 +45,8 @@ bool HdCyclesRenderBuffer::Allocate(const GfVec3i &dimensions,
     return false;
   }
 
-  const size_t oldSize = _dataSize;
-  const size_t newSize = dimensions[0] * dimensions[1] * HdDataSizeOfFormat(format);
-  if (oldSize == newSize) {
+  if (unsigned(dimensions[0]) == _width && unsigned(dimensions[1]) == _height && format == _format)
+  {
     return true;
   }
 
@@ -51,7 +58,7 @@ bool HdCyclesRenderBuffer::Allocate(const GfVec3i &dimensions,
   _width = dimensions[0];
   _height = dimensions[1];
   _format = format;
-  _dataSize = newSize;
+  _data.assign(size_t(_width) * _height * HdDataSizeOfFormat(format), 0);
   _resourceUsed = false;
 
   return true;
@@ -65,7 +72,6 @@ void HdCyclesRenderBuffer::_Deallocate()
 
   _data.clear();
   _data.shrink_to_fit();
-  _dataSize = 0;
 
   _resource = VtValue();
 }
@@ -75,10 +81,6 @@ void *HdCyclesRenderBuffer::Map()
   // Mapping is not implemented when a resource is set
   if (!_resource.IsEmpty()) {
     return nullptr;
-  }
-
-  if (_data.size() != _dataSize) {
-    _data.resize(_dataSize);
   }
 
   ++_mapped;
@@ -164,26 +166,27 @@ struct HalfConversion {
   }
 };
 
+/* Copies a size[0] x size[1] block, stepping rows by each side's width in pixels. */
 template<typename SrcT, typename DstT, typename Convertor = SimpleConversion>
 void writePixels(const SrcT *srcPtr,
-                 const GfVec2i &srcSize,
+                 const int srcWidth,
                  const int srcChannelCount,
                  DstT *dstPtr,
-                 const GfVec2i &dstSize,
+                 const int dstWidth,
                  const int dstChannelCount,
+                 const GfVec2i &size,
                  const Convertor &convertor = {})
 {
-  const auto writeSize = GfVec2i(GfMin(srcSize[0], dstSize[0]), GfMin(srcSize[1], dstSize[1]));
-  const auto writeChannelCount = GfMin(srcChannelCount, dstChannelCount);
+  const int writeChannelCount = GfMin(srcChannelCount, dstChannelCount);
 
-  for (int y = 0; y < writeSize[1]; ++y) {
-    for (int x = 0; x < writeSize[0]; ++x) {
+  for (int y = 0; y < size[1]; ++y) {
+    for (int x = 0; x < size[0]; ++x) {
       for (int c = 0; c < writeChannelCount; ++c) {
         dstPtr[x * dstChannelCount + c] = convertor.convert(srcPtr[x * srcChannelCount + c]);
       }
     }
-    srcPtr += srcSize[0] * srcChannelCount;
-    dstPtr += dstSize[0] * dstChannelCount;
+    srcPtr += size_t(srcWidth) * srcChannelCount;
+    dstPtr += size_t(dstWidth) * dstChannelCount;
   }
 }
 
@@ -195,10 +198,23 @@ void HdCyclesRenderBuffer::WritePixels(const float *srcPixels,
                                        const int srcChannels,
                                        bool isId)
 {
-  uint8_t *dstPixels = _data.data();
+  /* Only the part of the tile inside the buffer: a tile can start before the buffer or run
+   * past its far edge. */
+  const GfVec2i begin(std::max(0, -srcOffset[0]), std::max(0, -srcOffset[1]));
+  const GfVec2i end(std::min(srcDims[0], int(_width) - srcOffset[0]),
+                    std::min(srcDims[1], int(_height) - srcOffset[1]));
+  if (end[0] <= begin[0] || end[1] <= begin[1]) {
+    return;
+  }
+  const GfVec2i size = end - begin;
+  const int srcWidth = srcDims[0];
+  const int dstWidth = int(_width);
+  srcPixels += (size_t(begin[1]) * srcWidth + begin[0]) * srcChannels;
 
   const size_t formatSize = HdDataSizeOfFormat(_format);
-  dstPixels += srcOffset[1] * (formatSize * _width) + srcOffset[0] * formatSize;
+  uint8_t *const dstPixels = _data.data() +
+                             (size_t(srcOffset[1] + begin[1]) * _width + srcOffset[0] + begin[0]) *
+                                 formatSize;
 
   switch (_format) {
     case HdFormatUNorm8:
@@ -206,11 +222,12 @@ void HdCyclesRenderBuffer::WritePixels(const float *srcPixels,
     case HdFormatUNorm8Vec3:
     case HdFormatUNorm8Vec4:
       writePixels(srcPixels,
-                  srcDims,
+                  srcWidth,
                   srcChannels,
                   dstPixels,
-                  GfVec2i(_width, _height),
+                  dstWidth,
                   1 + (_format - HdFormatUNorm8),
+                  size,
                   UInt8Conversion());
       break;
 
@@ -219,11 +236,12 @@ void HdCyclesRenderBuffer::WritePixels(const float *srcPixels,
     case HdFormatSNorm8Vec3:
     case HdFormatSNorm8Vec4:
       writePixels(srcPixels,
-                  srcDims,
+                  srcWidth,
                   srcChannels,
-                  dstPixels,
-                  GfVec2i(_width, _height),
+                  reinterpret_cast<int8_t *>(dstPixels),
+                  dstWidth,
                   1 + (_format - HdFormatSNorm8),
+                  size,
                   SInt8Conversion());
       break;
 
@@ -232,11 +250,12 @@ void HdCyclesRenderBuffer::WritePixels(const float *srcPixels,
     case HdFormatFloat16Vec3:
     case HdFormatFloat16Vec4:
       writePixels(srcPixels,
-                  srcDims,
+                  srcWidth,
                   srcChannels,
                   reinterpret_cast<half *>(dstPixels),
-                  GfVec2i(_width, _height),
+                  dstWidth,
                   1 + (_format - HdFormatFloat16),
+                  size,
                   HalfConversion());
       break;
 
@@ -245,42 +264,46 @@ void HdCyclesRenderBuffer::WritePixels(const float *srcPixels,
     case HdFormatFloat32Vec3:
     case HdFormatFloat32Vec4:
       writePixels(srcPixels,
-                  srcDims,
+                  srcWidth,
                   srcChannels,
                   reinterpret_cast<float *>(dstPixels),
-                  GfVec2i(_width, _height),
-                  1 + (_format - HdFormatFloat32));
+                  dstWidth,
+                  1 + (_format - HdFormatFloat32),
+                  size);
       break;
 
     case HdFormatInt32:
       // Special case for ID AOVs (see 'HdCyclesMesh::Sync')
       if (isId) {
         writePixels(srcPixels,
-                    srcDims,
+                    srcWidth,
                     srcChannels,
                     reinterpret_cast<int *>(dstPixels),
-                    GfVec2i(_width, _height),
+                    dstWidth,
                     1,
+                    size,
                     IdConversion());
       }
       else {
         writePixels(srcPixels,
-                    srcDims,
+                    srcWidth,
                     srcChannels,
                     reinterpret_cast<int *>(dstPixels),
-                    GfVec2i(_width, _height),
-                    1);
+                    dstWidth,
+                    1,
+                    size);
       }
       break;
     case HdFormatInt32Vec2:
     case HdFormatInt32Vec3:
     case HdFormatInt32Vec4:
       writePixels(srcPixels,
-                  srcDims,
+                  srcWidth,
                   srcChannels,
                   reinterpret_cast<int *>(dstPixels),
-                  GfVec2i(_width, _height),
-                  1 + (_format - HdFormatInt32));
+                  dstWidth,
+                  1 + (_format - HdFormatInt32),
+                  size);
       break;
 
     default:

@@ -18,6 +18,13 @@ class HdCyclesRenderBuffer final : public PXR_NS::HdRenderBuffer {
 
   void Finalize(PXR_NS::HdRenderParam *renderParam) override;
 
+  /* Reallocates under the session's AOV lock, which the output driver holds while it writes:
+   * Cycles writes from its render thread while Hydra syncs, and a buffer reallocated under a
+   * write (a viewport resize) corrupted the heap. */
+  void Sync(PXR_NS::HdSceneDelegate *sceneDelegate,
+            PXR_NS::HdRenderParam *renderParam,
+            PXR_NS::HdDirtyBits *dirtyBits) override;
+
   bool Allocate(const PXR_NS::GfVec3i &dimensions,
                 PXR_NS::HdFormat format,
                 bool multiSampled) override;
@@ -77,8 +84,8 @@ class HdCyclesRenderBuffer final : public PXR_NS::HdRenderBuffer {
   unsigned int _width = 0u;
   unsigned int _height = 0u;
   PXR_NS::HdFormat _format = PXR_NS::HdFormatInvalid;
-  size_t _dataSize = 0;
 
+  // Sized by Allocate, never by Map, so that only Sync reallocates it.
   std::vector<uint8_t> _data;
   PXR_NS::VtValue _resource;
   mutable std::atomic_bool _resourceUsed = false;
