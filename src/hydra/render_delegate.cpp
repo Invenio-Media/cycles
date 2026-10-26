@@ -558,6 +558,7 @@ void HdCyclesDelegate::RebuildSession()
   // husk's framing and shutter, which aren't in _appliedSettings.
   newSession->productFraming = _renderParam->productFraming;
   newSession->shutter = _renderParam->shutter;
+  newSession->TakeCameras(*_renderParam);
   {
     const thread_scoped_lock sceneLock(newSession->session->scene->mutex);
     newSession->ApplyShutter();
@@ -963,12 +964,15 @@ HdRenderSettingDescriptorList HdCyclesDelegate::GetRenderSettingDescriptors() co
 void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS::VtValue &value)
 {
   /* The render camera, whose shutter applies when no shutter settings come (Houdini's
-   * viewport); it syncs before the geometry (HdCyclesCamera::Sync). */
+   * viewport). It may have synced already, or sync next, before the geometry. */
   if (key == _tokens->renderCameraPath) {
-    _renderParam->renderCameraPath = value.IsHolding<SdfPath>() ?
-                                         value.UncheckedGet<SdfPath>() :
-                                         SdfPath(VtValue::Cast<std::string>(value).GetWithDefault(
-                                             std::string()));
+    const SdfPath camera = value.IsHolding<SdfPath>() ?
+                               value.UncheckedGet<SdfPath>() :
+                               SdfPath(VtValue::Cast<std::string>(value).GetWithDefault(
+                                   std::string()));
+    if (_renderParam->SetRenderCamera(camera)) {
+      ++_settingsVersion;
+    }
   }
   /* The render camera's shutter: geometry and the camera sample their motion across it when
    * they sync, which is after the settings husk sends. */
@@ -976,7 +980,6 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
       key == _tokens->disableMotionBlur || key == _tokens->instantaneousShutter)
   {
     HdCyclesShutter &shutter = _renderParam->shutter;
-    shutter.fromSettings = true;
     const bool flag = key == _tokens->disableMotionBlur || key == _tokens->instantaneousShutter;
     const VtValue cast = flag ? VtValue::Cast<bool>(value) : VtValue::Cast<double>(value);
     if (cast.IsEmpty()) {
@@ -984,6 +987,10 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
                     key.GetText(),
                     value.GetTypeName().c_str());
       return;
+    }
+    /* A host sending the shutter's open or close replaces the render camera's for good. */
+    if (key == _tokens->shutterOpen || key == _tokens->shutterClose) {
+      shutter.fromSettings = true;
     }
     HdCyclesShutter next = shutter;
     if (key == _tokens->shutterOpen) {

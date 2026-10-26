@@ -216,19 +216,72 @@ void HdCyclesSession::ApplyShutter()
 
 bool HdCyclesSession::UpdateShutter(const HdCyclesShutter &next)
 {
-  /* husk can resend the same shutter every frame; only a change resamples prims. */
-  if (next.open == shutter.open && next.close == shutter.close &&
-      next.disableMotionBlur == shutter.disableMotionBlur &&
-      next.instantaneous == shutter.instantaneous)
   {
-    return false;
+    const thread_scoped_lock lock(_shutterMutex);
+    /* husk can resend the same shutter every frame; only a change resamples prims. */
+    if (next.open == shutter.open && next.close == shutter.close &&
+        next.disableMotionBlur == shutter.disableMotionBlur &&
+        next.instantaneous == shutter.instantaneous)
+    {
+      return false;
+    }
+    const unsigned int version = shutter.version;
+    shutter = next;
+    shutter.version = version + 1;
   }
-  const unsigned int version = shutter.version;
-  shutter = next;
-  shutter.version = version + 1;
   const thread_scoped_lock sceneLock(session->scene->mutex);
   ApplyShutter();
   return true;
+}
+
+HdCyclesShutter HdCyclesSession::GetShutter() const
+{
+  const thread_scoped_lock lock(_shutterMutex);
+  return shutter;
+}
+
+bool HdCyclesSession::SetCameraShutter(const SdfPath &camera, const float open, const float close)
+{
+  const thread_scoped_lock lock(_cameraMutex);
+  _cameraShutters[camera] = {open, close};
+  if (camera != _renderCamera || GetShutter().fromSettings) {
+    return false;
+  }
+  HdCyclesShutter next = GetShutter();
+  next.open = open;
+  next.close = close;
+  return UpdateShutter(next);
+}
+
+bool HdCyclesSession::SetRenderCamera(const SdfPath &camera)
+{
+  const thread_scoped_lock lock(_cameraMutex);
+  if (camera == _renderCamera) {
+    return false;
+  }
+  _renderCamera = camera;
+  const auto it = _cameraShutters.find(camera);
+  if (it == _cameraShutters.end() || GetShutter().fromSettings) {
+    return false;
+  }
+  HdCyclesShutter next = GetShutter();
+  next.open = it->second.first;
+  next.close = it->second.second;
+  return UpdateShutter(next);
+}
+
+void HdCyclesSession::RemoveCameraShutter(const SdfPath &camera)
+{
+  const thread_scoped_lock lock(_cameraMutex);
+  _cameraShutters.erase(camera);
+}
+
+void HdCyclesSession::TakeCameras(HdCyclesSession &previous)
+{
+  const thread_scoped_lock lock(_cameraMutex);
+  const thread_scoped_lock previousLock(previous._cameraMutex);
+  _cameraShutters = previous._cameraShutters;
+  _renderCamera = previous._renderCamera;
 }
 
 void HdCyclesSession::UpdateScene()

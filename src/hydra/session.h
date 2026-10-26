@@ -12,13 +12,16 @@
 #include "util/thread.h"
 
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include <pxr/base/gf/vec2i.h>
 #include <pxr/base/gf/vec4f.h>
 #include <pxr/imaging/cameraUtil/conformWindow.h>
 #include <pxr/imaging/hd/renderDelegate.h>
+#include <pxr/usd/sdf/path.h>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
@@ -67,8 +70,8 @@ struct HdCyclesShutter {
   float close = 0.0f;
   bool disableMotionBlur = false;
   bool instantaneous = false;
-  // Set once a host sends the shutter as render settings, as husk does. Houdini's viewport
-  // doesn't, and the render pass then takes the render camera's.
+  // Set once a host sends the shutter's open or close as render settings, as husk does.
+  // Houdini's viewport doesn't, and the render camera's shutter applies (SetCameraShutter).
   bool fromSettings = false;
   // Bumped on every change, so the render pass can resample prims that synced before it.
   unsigned int version = 0;
@@ -112,10 +115,23 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
 
   // Applies a new render camera shutter and returns whether it changed; prims resample their
   // motion across it when they next sync. From the shutter render settings husk sends, or from
-  // the render camera, which syncs before them, when a host sends none (Houdini's viewport).
+  // the render camera when a host sends none (Houdini's viewport).
   bool UpdateShutter(const HdCyclesShutter &next);
   // Sets Cycles' motion blur from the shutter. Call with the scene locked.
   void ApplyShutter();
+  // The shutter, for cameras, which sync in parallel with the render camera that may change
+  // it. Geometry, which syncs after the cameras, reads `shutter`.
+  HdCyclesShutter GetShutter() const;
+
+  // Each camera's shutter, recorded as it syncs. Without shutter settings the render camera's
+  // applies, whether the camera or the renderCameraPath setting naming it comes first; Hydra
+  // syncs cameras before the geometry, which then samples its motion across it. Return
+  // whether the shutter changed.
+  bool SetCameraShutter(const PXR_NS::SdfPath &camera, float open, float close);
+  bool SetRenderCamera(const PXR_NS::SdfPath &camera);
+  void RemoveCameraShutter(const PXR_NS::SdfPath &camera);
+  // A rebuilt session keeps the cameras, which don't hold it back from rebuilding.
+  void TakeCameras(HdCyclesSession &previous);
 
   double GetStageMetersPerUnit() const
   {
@@ -209,9 +225,6 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   // Set by husk; geometry and the camera sample their motion across it.
   HdCyclesShutter shutter;
 
-  // The render camera, which Houdini's viewport and husk name in the renderCameraPath setting.
-  PXR_NS::SdfPath renderCameraPath;
-
  private:
   const bool _ownCyclesSession;
   double _stageMetersPerUnit = 0.01;
@@ -222,6 +235,11 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   mutable CCL_NS::thread_mutex _aovMutex;
   std::unordered_set<HdCyclesMesh *> _pixelDiced;
   CCL_NS::thread_mutex _pixelDicedMutex;
+  mutable CCL_NS::thread_mutex _shutterMutex;
+  std::unordered_map<PXR_NS::SdfPath, std::pair<float, float>, PXR_NS::SdfPath::Hash>
+      _cameraShutters;
+  PXR_NS::SdfPath _renderCamera;
+  CCL_NS::thread_mutex _cameraMutex;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

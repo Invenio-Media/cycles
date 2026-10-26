@@ -66,8 +66,10 @@ class HdCyclesMesh final : public HdCyclesGeometry<PXR_NS::HdMesh, CCL_NS::Mesh>
   // The points' bounds in object space, for the size the dicing camera sees.
   CCL_NS::float3 _boundsCenter = CCL_NS::zero_float3();
   float _boundsRadius = 0.0f;
-  // That size when the mesh was last diced; 0 when it hasn't been.
+  // That size, in pixels, when the mesh was last diced; 0 when it hasn't been.
   float _dicedSize = 0.0f;
+  // Whether it's registered with the session as pixel-diced.
+  bool _pixelDiced = false;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

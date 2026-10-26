@@ -118,10 +118,12 @@ void HdCyclesMesh::Sync(HdSceneDelegate *sceneDelegate,
                         const TfToken &reprToken)
 {
   HdCyclesGeometry::Sync(sceneDelegate, renderParam, dirtyBits, reprToken);
-  static_cast<HdCyclesSession *>(renderParam)
-      ->SetPixelDiced(this,
-                      _geom && _geom->get_subdivision_type() != Mesh::SUBDIVISION_NONE &&
-                          !_subdObjectSpace);
+  const bool pixelDiced = _geom && _geom->get_subdivision_type() != Mesh::SUBDIVISION_NONE &&
+                          !_subdObjectSpace;
+  if (pixelDiced != _pixelDiced) {
+    static_cast<HdCyclesSession *>(renderParam)->SetPixelDiced(this, pixelDiced);
+    _pixelDiced = pixelDiced;
+  }
 }
 
 /* A factor of 1.5 keeps edges within 1.5 times the dicing rate, or two thirds of it. */
@@ -136,12 +138,21 @@ void HdCyclesMesh::UpdateDicing(Scene *scene)
                        len(transform_direction(&tfm, make_float3(0.0f, 1.0f, 0.0f))) +
                        len(transform_direction(&tfm, make_float3(0.0f, 0.0f, 1.0f)))) /
                       3.0f;
-  /* An orthographic camera sees the same size at any distance; its view plane is in world
-   * units. */
-  const float depth = camera->get_camera_type() == CAMERA_ORTHOGRAPHIC ?
-                          camera->viewplane.top - camera->viewplane.bottom :
-                          len(center - transform_get_column(&camera->get_matrix(), 3));
-  const float size = _boundsRadius * scale / std::max(depth, 1e-6f);
+  const float radius = _boundsRadius * scale;
+  /* The mesh's size in pixels: through the lens and onto the film, so a zoom or a new
+   * resolution counts as a move does. An orthographic camera sees the same size at any
+   * distance; its view plane is in world units. A camera inside the bounds sees the mesh at
+   * its radius, so moving about inside it doesn't re-dice. */
+  const float height = float(camera->get_full_height());
+  float size;
+  if (camera->get_camera_type() == CAMERA_ORTHOGRAPHIC) {
+    size = radius * height / std::max(camera->viewplane.top - camera->viewplane.bottom, 1e-6f);
+  }
+  else {
+    const float depth = std::max(len(center - transform_get_column(&camera->get_matrix(), 3)),
+                                 radius);
+    size = radius * height / std::max(depth * 2.0f * std::tan(0.5f * camera->get_fov()), 1e-6f);
+  }
 
   if (!_geom->need_tesselation()) {
     if (_dicedSize > 0.0f && size < _dicedSize * kRediceFactor &&
@@ -257,12 +268,16 @@ void HdCyclesMesh::PopulatePoints(HdSceneDelegate *sceneDelegate)
   ApplyPointsMotion(attr_P, samples, numPoints);
   _geom->tag_position_modified();
 
-  BoundBox bounds = BoundBox::empty;
-  for (size_t i = 0; i < numPoints; ++i) {
-    bounds.grow(make_float3(points[i][0], points[i][1], points[i][2]));
+  /* The rest points' bounds, for the size the dicing camera sees (UpdateDicing): enough for
+   * a heuristic, though displacement and deformation can reach past them. */
+  if (subdivision) {
+    BoundBox bounds = BoundBox::empty;
+    for (size_t i = 0; i < numPoints; ++i) {
+      bounds.grow(make_float3(points[i][0], points[i][1], points[i][2]));
+    }
+    _boundsCenter = bounds.valid() ? bounds.center() : zero_float3();
+    _boundsRadius = bounds.valid() ? 0.5f * len(bounds.size()) : 0.0f;
   }
-  _boundsCenter = bounds.valid() ? bounds.center() : zero_float3();
-  _boundsRadius = bounds.valid() ? 0.5f * len(bounds.size()) : 0.0f;
 }
 
 void HdCyclesMesh::PopulateNormals(HdSceneDelegate *sceneDelegate)
@@ -739,7 +754,10 @@ void HdCyclesMesh::ApplySubdivisionSettings()
 
 void HdCyclesMesh::Finalize(PXR_NS::HdRenderParam *renderParam)
 {
-  static_cast<HdCyclesSession *>(renderParam)->SetPixelDiced(this, false);
+  if (_pixelDiced) {
+    static_cast<HdCyclesSession *>(renderParam)->SetPixelDiced(this, false);
+    _pixelDiced = false;
+  }
   _topology = HdMeshTopology();
   _primitiveParams.clear();
   _dicedSize = 0.0f;
