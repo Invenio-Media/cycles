@@ -7,6 +7,7 @@
 #include "hydra/diagnostic.h"
 #include "hydra/materialx.h"
 #include "hydra/node_util.h"
+#include "hydra/ramps.h"
 #include "hydra/session.h"
 #include "hydra/util.h"
 #include "scene/scene.h"
@@ -698,6 +699,10 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
     if (inputName == SKIP_PARAM) {
       continue;
     }
+    /* A part of a ramp, which HdCyclesApplyRamps bakes into the node's table below. */
+    if (HdCyclesIsRampParameter(nodeDesc.node->type->name.string(), paramName)) {
+      continue;
+    }
 
     /* Find the input to write the parameter value to. */
     const SocketType *input = nullptr;
@@ -753,6 +758,12 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
     array<int> tiles = FindUdimTiles(image->get_filename().string());
     image->set_tiles(tiles);
   }
+
+  /* Color Ramp and the curve nodes take tables, baked from the network's ramps. Warnings
+   * name the node within its material. */
+  HdCyclesApplyRamps(nodeDesc.node,
+                     params,
+                     GetId().AppendPath(nodePath.MakeRelativePath(SdfPath::AbsoluteRootPath())));
 }
 
 void HdCyclesMaterial::UpdateParameters(HdMaterialNetworkSchema network)

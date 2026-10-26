@@ -41,6 +41,7 @@ set(SRC_HD_CYCLES_HEADERS
   object_settings.h
   output_driver.h
   pointcloud.h
+  ramps.h
   render_buffer.h
   render_delegate.h
   render_pass.h
@@ -66,6 +67,7 @@ set(SRC_HD_CYCLES
   object_settings.cpp
   output_driver.cpp
   pointcloud.cpp
+  ramps.cpp
   render_buffer.cpp
   render_delegate.cpp
   render_pass.cpp
