@@ -29,6 +29,7 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
     ((sampleOffset,     "cycles:sample_offset")) \
     (renderingColorSpace) \
     ((settingsManifest, "cycles:settings_manifest")) \
+    ((shaderNodes,      "cycles:shader_nodes")) \
     /* film sockets */ \
     ((filmExposure,                 "cycles:film:exposure")) \
     ((filmPassAlphaThreshold,       "cycles:film:pass_alpha_threshold")) \

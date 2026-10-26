@@ -13,6 +13,7 @@
 #include "hydra/light.h"
 #include "hydra/material.h"
 #include "hydra/mesh.h"
+#include "hydra/node_registry.h"
 #include "hydra/node_util.h"
 #include "hydra/pointcloud.h"
 #include "hydra/render_buffer.h"
@@ -1186,6 +1187,11 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
 
 VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
 {
+  /* Read-only: Cycles' shader nodes as JSON, for generating host node libraries
+   * (hydra/node_registry.h). */
+  if (key == HdCyclesRenderSettingsTokens->shaderNodes) {
+    return VtValue(HdCyclesShaderNodesJson());
+  }
   if (key == HdCyclesRenderSettingsTokens->settingsManifest) {
     Scene *const scene = _renderParam->session->scene.get();
     VtDictionary manifest;
