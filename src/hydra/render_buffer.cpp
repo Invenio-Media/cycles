@@ -8,6 +8,7 @@
 #include "hydra/session.h"
 #include "util/half.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <pxr/base/gf/vec3i.h>
@@ -40,7 +41,7 @@ bool HdCyclesRenderBuffer::Allocate(const GfVec3i &dimensions,
                                     HdFormat format,
                                     bool /*multiSampled*/)
 {
-  if (dimensions[2] != 1) {
+  if (dimensions[0] < 0 || dimensions[1] < 0 || dimensions[2] != 1) {
     HDCYCLES_ERROR("HdCyclesRenderBuffer::Allocate called with dimensions that are not 2D.");
     return false;
   }
@@ -58,7 +59,10 @@ bool HdCyclesRenderBuffer::Allocate(const GfVec3i &dimensions,
   _width = dimensions[0];
   _height = dimensions[1];
   _format = format;
-  _data.assign(size_t(_width) * _height * HdDataSizeOfFormat(format), 0);
+  /* ID buffers start at -1, Hydra's "nothing", rather than at prim 0, until the first tile
+   * arrives. */
+  const bool isId = format >= HdFormatInt32 && format <= HdFormatInt32Vec4;
+  _data.assign(size_t(_width) * _height * HdDataSizeOfFormat(format), isId ? 0xFF : 0);
   _resourceUsed = false;
 
   return true;

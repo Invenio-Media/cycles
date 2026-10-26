@@ -25,6 +25,8 @@ class HdCyclesRenderBuffer final : public PXR_NS::HdRenderBuffer {
             PXR_NS::HdRenderParam *renderParam,
             PXR_NS::HdDirtyBits *dirtyBits) override;
 
+  /* Only Sync calls this (Hydra's HdRenderBuffer::Sync), so it holds the AOV lock; it refuses
+   * to reallocate a mapped buffer, whose pointer a reader still holds. */
   bool Allocate(const PXR_NS::GfVec3i &dimensions,
                 PXR_NS::HdFormat format,
                 bool multiSampled) override;
