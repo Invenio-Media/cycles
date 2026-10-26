@@ -7,8 +7,15 @@
 
 #include "hydra/config.h"
 
+#include <string>
+
 #include <pxr/imaging/hd/dataSource.h>
 #include <pxr/imaging/hd/light.h>
+
+CCL_NAMESPACE_BEGIN
+class ShaderInput;
+struct Transform;
+CCL_NAMESPACE_END
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
@@ -29,6 +36,12 @@ class HdCyclesLight final : public PXR_NS::HdLight {
   void Initialize(PXR_NS::HdRenderParam *renderParam);
 
   void PopulateShaderGraph(const PXR_NS::HdContainerDataSourceHandle &lightContainer);
+
+  void ApplyIes(CCL_NS::ShaderGraph *graph,
+                const PXR_NS::HdContainerDataSourceHandle &lightContainer,
+                const std::string &filename,
+                const CCL_NS::Transform &tfm,
+                CCL_NS::ShaderInput *strength);
 
   CCL_NS::Object *_object = nullptr;
   CCL_NS::Light *_light = nullptr;
