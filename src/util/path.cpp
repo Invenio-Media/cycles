@@ -60,7 +60,6 @@ using path_stat_t = struct stat;
 
 static string cached_path;
 static string cached_user_path;
-static string cached_xdg_cache_path;
 
 namespace {
 
@@ -379,9 +378,10 @@ string path_user_get(const string &sub)
 string path_cache_get(const string &sub)
 {
 #if defined(__linux__) || defined(__APPLE__)
-  if (cached_xdg_cache_path.empty()) {
-    cached_xdg_cache_path = path_xdg_cache_get();
-  }
+  /* Initialised once, thread-safely: Metal's kernel compile threads ask for it at the same
+   * time, and filling a global lazily from them was a data race. A render hung with a compile
+   * thread terminating on an exception from NSURL fileURLWithPath, given this path. */
+  static const string cached_xdg_cache_path = path_xdg_cache_get();
   const string result = path_join(cached_xdg_cache_path, "cycles");
   return path_join(result, sub);
 #else
