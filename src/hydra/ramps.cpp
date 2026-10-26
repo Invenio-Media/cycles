@@ -125,8 +125,15 @@ Ramp ReadRamp(const HdMaterialNodeParameterContainerSchema &params,
     ramp.basis = TfToken(basis.UncheckedGet<std::string>());
   }
 
-  if (ramp.keys.empty() || ramp.keys.size() != ramp.values.size()) {
-    if (!ramp.keys.empty() || !ramp.values.empty()) {
+  const bool finite = std::all_of(
+      ramp.keys.begin(), ramp.keys.end(), [](const float k) { return std::isfinite(k); });
+  if (ramp.keys.empty() || ramp.keys.size() != ramp.values.size() || !finite) {
+    if (!finite) {
+      HDCYCLES_WARN("Ramp '%s' on '%s' has a key that isn't a number; using its default",
+                    name.c_str(),
+                    nodePath.GetText());
+    }
+    else if (!ramp.keys.empty() || !ramp.values.empty()) {
       HDCYCLES_WARN("Ramp '%s' on '%s' has %zu keys and %zu values; using its default",
                     name.c_str(),
                     nodePath.GetText(),
@@ -271,12 +278,16 @@ void HdCyclesApplyRamps(ShaderNode *node,
     for (int i = 0; i < RAMP_TABLE_SIZE; ++i) {
       const float t = sample(i);
       float out[3];
-      for (int c = 0; c < 3; ++c) {
-        if (rgb) {
-          const float combined = Lookup(ramps[0], t)[0];
-          out[c] = Lookup(ramps[c + 1], Position(combined, minX, maxX))[0];
+      if (rgb) {
+        /* Each channel through its own curve after the combined one, both in the node's x
+         * range, as Blender bakes its RGB curves. */
+        const float combined = Position(Lookup(ramps[0], t)[0], minX, maxX);
+        for (int c = 0; c < 3; ++c) {
+          out[c] = Lookup(ramps[c + 1], combined)[0];
         }
-        else {
+      }
+      else {
+        for (int c = 0; c < 3; ++c) {
           out[c] = Lookup(ramps[c], t)[0];
         }
       }

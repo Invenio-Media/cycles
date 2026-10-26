@@ -29,7 +29,8 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
  * - vector_curves: x_curve, y_curve and z_curve, into curves.
  * A curve's [0, 1] maps to the node's min_x to max_x. An unauthored ramp is the VOP's default:
  * black to white, alpha 1, or the identity. Constant, linear and Catmull-Rom interpolate as
- * Houdini's ramps do; other bases are evaluated as Catmull-Rom, with a warning. */
+ * Houdini's ramps do; other bases are evaluated as Catmull-Rom, with a warning. A ramp has one
+ * basis: Houdini's translator writes the first key's, so keys with other bases follow it. */
 
 /* Whether the parameter is a part of one of the node type's ramps, which
  * HdCyclesApplyRamps reads rather than a socket. */
