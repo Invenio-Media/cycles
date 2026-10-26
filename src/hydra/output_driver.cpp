@@ -57,6 +57,10 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
       const size_t channels = HdGetComponentCount(format);
       const size_t numValues = channels * tile.size.x * tile.size.y;
       const auto applyScale = [&aovPass, numValues](float *values) {
+        if (aovPass.isDepth) {
+          // Cycles' no-hit depth (1e10) is 0, as in Karma (HdCyclesAovPass::isDepth)
+          std::replace_if(values, values + numValues, [](float v) { return v >= 1e10f; }, 0.0f);
+        }
         if (aovPass.scale != 1.0f) {
           std::for_each_n(values, numValues, [&aovPass](float &v) { v *= aovPass.scale; });
         }

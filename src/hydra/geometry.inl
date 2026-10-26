@@ -114,8 +114,10 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
   }
 
   if (HdChangeTracker::IsPrimIdDirty(*dirtyBits, id)) {
-    // This needs to be corrected in the AOV
-    _instances[0]->set_pass_id(Base::GetPrimId() + 1);
+    // Offset by one, which the AOV read-back takes off again (HdCyclesAovPass::isId)
+    for (Object *const instance : _instances) {
+      instance->set_pass_id(Base::GetPrimId() + 1);
+    }
   }
 
   /* The transform at the frame, and at evenly spaced times across the shutter for motion blur.
@@ -166,19 +168,13 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
     auto *const instancer = static_cast<HdCyclesInstancer *>(
         sceneDelegate->GetRenderIndex().GetInstancer(Base::GetInstancerId()));
 
-    // Make sure the first object attribute is the instanceId
-    assert(_instances[0]->attributes.size() >= 1 &&
-           _instances[0]->attributes.front().name() == HdAovTokens->instanceId.GetString());
-
     VtMatrix4dArray transforms;
     if (instancer) {
       transforms = instancer->ComputeInstanceTransforms(id);
-      _instances[0]->attributes.front() = ParamValue(HdAovTokens->instanceId.GetString(), +0.0f);
     }
     else {
       // Default to a single instance with an identity transform
       transforms.push_back(GfMatrix4d(1.0));
-      _instances[0]->attributes.front() = ParamValue(HdAovTokens->instanceId.GetString(), -1.0f);
     }
 
     /* An instancer can give the prim no instances (a prototype it doesn't use, or a hidden
@@ -369,7 +365,8 @@ void HdCyclesGeometry<Base, CyclesBase>::InitializeInstance(int index)
   instance->set_asset_name(ustring(Base::GetId().GetParentPath().GetString()));
 
   instance->attributes.emplace_back(HdAovTokens->instanceId.GetString(),
-                                    _instances.size() == 1 ? -1.0f : static_cast<float>(index));
+                                    static_cast<float>(index + 1));
+  instance->set_pass_id(Base::GetPrimId() + 1);
 
   instance->set_color(make_float3(0.8f, 0.8f, 0.8f));
   instance->set_random_id(hash_uint2(hash_string(_geom->name.c_str()), index));

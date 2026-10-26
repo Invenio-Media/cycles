@@ -415,6 +415,7 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
     }
 
     aovPass.isId = sourceName == HdAovTokens->primId || sourceName == HdAovTokens->instanceId;
+    aovPass.isDepth = type == PASS_DEPTH;
     if (type == PASS_POSITION || type == PASS_DEPTH) {
       aovPass.scale = float(1.0 / _stageMetersPerUnit);
     }

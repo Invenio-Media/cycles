@@ -45,8 +45,13 @@ CCL_NS::PassType HdCyclesPassTypeForAov(const PXR_NS::TfToken &sourceName);
 struct HdCyclesAovPass {
   // The Cycles pass the binding reads; empty when the binding has no pass.
   std::string passName;
-  // Integer ID buffer: Cycles stores IDs offset by one (see 'HdCyclesMesh::Sync').
+  /* Integer ID buffer. Cycles stores IDs offset by one, so that its empty pass value 0 reads
+   * back as Hydra's -1: primId in the object's pass_id, instanceId in an object attribute
+   * (HdCyclesGeometry::Sync and InitializeInstance). */
   bool isId = false;
+  /* Cycles fills a depth pass with 1e10 where nothing was hit; Karma writes 0 there, and so
+   * does this, which keeps the viewport's display of depth to the scene's range. */
+  bool isDepth = false;
   // Multiplies the pass values. The scene is in metres inside Cycles; positions and depths
   // go back to stage units.
   float scale = 1.0f;

@@ -8,6 +8,8 @@
 #include "hydra/session.h"
 #include "util/half.h"
 
+#include <cmath>
+
 #include <pxr/base/gf/vec3i.h>
 #include <pxr/base/gf/vec4f.h>
 
@@ -134,9 +136,13 @@ struct SimpleConversion {
   }
 };
 struct IdConversion {
+  /* IDs are stored offset by one (HdCyclesAovPass::isId). primId comes from the object ID
+   * pass, written by the first sample; instanceId from an AOV value, averaged over the
+   * samples, so an edge pixel holds a mix: rounding keeps a prim's own index where it covers
+   * most of the pixel. */
   static int32_t convert(const float value)
   {
-    return static_cast<int32_t>(value) - 1;
+    return static_cast<int32_t>(std::lround(value)) - 1;
   }
 };
 struct UInt8Conversion {
