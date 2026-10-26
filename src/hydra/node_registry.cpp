@@ -9,6 +9,7 @@
 #include "util/transform.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -46,8 +47,12 @@ std::string Quote(const std::string &text)
   return out + "\"";
 }
 
+/* JSON has no infinity or NaN: such a default is null, as defaults without a plain value are. */
 std::string Number(const double value)
 {
+  if (!std::isfinite(value)) {
+    return "null";
+  }
   char text[32];
   snprintf(text, sizeof(text), "%.9g", value);
   return text;

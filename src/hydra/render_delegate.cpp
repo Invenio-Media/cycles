@@ -1188,9 +1188,10 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
 VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
 {
   /* Read-only: Cycles' shader nodes as JSON, for generating host node libraries
-   * (hydra/node_registry.h). */
+   * (hydra/node_registry.h). The registry is fixed once the plugin has loaded. */
   if (key == HdCyclesRenderSettingsTokens->shaderNodes) {
-    return VtValue(HdCyclesShaderNodesJson());
+    static const std::string json = HdCyclesShaderNodesJson();
+    return VtValue(json);
   }
   if (key == HdCyclesRenderSettingsTokens->settingsManifest) {
     Scene *const scene = _renderParam->session->scene.get();
