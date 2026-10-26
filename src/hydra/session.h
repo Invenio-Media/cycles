@@ -214,6 +214,21 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
     return _pixelDiced;
   }
 
+  // Geometry that is a mesh light (HdCyclesGeometry::UpdateMeshLight), which counts as a light
+  // for the default background. Geometry adds and removes itself as it syncs.
+  void SetMeshLight(const void *geometry, const bool light)
+  {
+    const CCL_NS::thread_scoped_lock lock(_meshLightsMutex);
+    const size_t before = _meshLights.size();
+    if (light) {
+      _meshLights.insert(geometry);
+    }
+    else {
+      _meshLights.erase(geometry);
+    }
+    _meshLightsChanged = _meshLightsChanged || _meshLights.size() != before;
+  }
+
   CCL_NS::Session *session;
   bool keep_nodes;
 
@@ -240,6 +255,9 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   mutable CCL_NS::thread_mutex _aovMutex;
   std::unordered_set<HdCyclesMesh *> _pixelDiced;
   CCL_NS::thread_mutex _pixelDicedMutex;
+  std::unordered_set<const void *> _meshLights;
+  bool _meshLightsChanged = false;
+  CCL_NS::thread_mutex _meshLightsMutex;
   mutable CCL_NS::thread_mutex _shutterMutex;
   std::unordered_map<PXR_NS::SdfPath, std::pair<float, float>, PXR_NS::SdfPath::Hash>
       _cameraShutters;

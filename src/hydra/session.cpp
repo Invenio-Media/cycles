@@ -289,9 +289,16 @@ void HdCyclesSession::UpdateScene()
   Scene *const scene = session->scene.get();
 
   // Update background depending on presence of a background light
-  if (scene->light_manager->need_update()) {
+  bool meshLightsChanged = false;
+  bool haveMeshLights = false;
+  {
+    const thread_scoped_lock lock(_meshLightsMutex);
+    meshLightsChanged = std::exchange(_meshLightsChanged, false);
+    haveMeshLights = !_meshLights.empty();
+  }
+  if (scene->light_manager->need_update() || meshLightsChanged) {
     Light *background_light = nullptr;
-    bool have_lights = false;
+    bool have_lights = haveMeshLights;
     for (Object *object : scene->objects) {
       if (!object->get_geometry()->is_light()) {
         continue;

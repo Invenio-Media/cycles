@@ -11,11 +11,17 @@
 #include "hydra/util.h"
 #include "scene/attribute.h"
 #include "scene/geometry.h"
+#include "scene/mesh.h"
 #include "scene/object.h"
 #include "scene/scene.h"
+#include "scene/shader.h"
+#include "scene/shader_graph.h"
+#include "scene/shader_nodes.h"
 #include "util/hash.h"
 
 #include <pxr/imaging/hd/categoriesSchema.h>
+#include <pxr/imaging/hd/light.h>
+#include <pxr/imaging/hd/lightSchema.h>
 #include <pxr/imaging/hd/materialBindingSchema.h>
 #include <pxr/imaging/hd/materialBindingsSchema.h>
 #include <pxr/imaging/hd/sceneDelegate.h>
@@ -23,6 +29,8 @@
 #include <pxr/imaging/hd/xformSchema.h>
 
 #include <algorithm>
+#include <cmath>
+#include <type_traits>
 #include <utility>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
@@ -286,8 +294,23 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
      * this, with the same parser. */
     const bool objectSpace = _geom->is_volume() && HdCyclesVolumeObjectSpace(read("volume:space"));
     const float densityScale = objectSpace ? 1.0f : 1.0f / _metersPerUnit;
+    /* A mesh light, as Karma renders it: seen only through the light it gives, unless
+     * cycles:object:visibility:camera (or the light's visibleInPrimaryRay) asks for it. */
+    unsigned visibility = visible ? PATH_RAY_VISIBILITY_ALL : 0;
+    if (const HdContainerDataSourceHandle lightDs =
+            HdLightSchema::GetFromParent(primDs).GetContainer())
+    {
+      static const TfToken visibleInPrimaryRay("visibleInPrimaryRay");
+      visibility &= ~(PATH_RAY_VISIBILITY_CAMERA | PATH_RAY_VISIBILITY_SHADOW);
+      if (visible &&
+          HdCyclesSettingValue<bool>(read("visibility:camera"),
+                                     GetTypedValue<bool>(lightDs, visibleInPrimaryRay, false)))
+      {
+        visibility |= PATH_RAY_VISIBILITY_CAMERA;
+      }
+    }
     for (Object *instance : _instances) {
-      HdCyclesApplyObjectSettings(instance, visible ? PATH_RAY_VISIBILITY_ALL : 0, read);
+      HdCyclesApplyObjectSettings(instance, visibility, read);
       instance->set_volume_density_scale(densityScale);
     }
   }
@@ -297,6 +320,9 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
   bool rebuild = false;
   Populate(sceneDelegate, *dirtyBits, rebuild);
   rebuild = rebuild || std::exchange(_motionRebuild, false);
+
+  /* After the material and its subsets, which a mesh light's shader replaces. */
+  UpdateMeshLight(sceneDelegate, lock.scene, primDs, renderParam);
 
   if (_geom->is_modified() || rebuild) {
     _geom->tag_update(lock.scene, rebuild);
@@ -332,8 +358,122 @@ void HdCyclesGeometry<Base, CyclesBase>::Finalize(HdRenderParam *renderParam)
 
   if (!keep_nodes) {
     lock.scene->delete_node(_geom);
+    if (_lightShader) {
+      lock.scene->delete_node(_lightShader);
+    }
   }
   _geom = nullptr;
+  _lightShader = nullptr;
+  _lightKey.clear();
+  static_cast<HdCyclesSession *>(renderParam)->SetMeshLight(this, false);
+}
+
+template<typename Base, typename CyclesBase>
+float HdCyclesGeometry<Base, CyclesBase>::SurfaceArea() const
+{
+  if constexpr (std::is_same_v<CyclesBase, Mesh>) {
+    const Attribute *attr_P = _geom->attributes.find(ATTR_STD_POSITION);
+    if (!attr_P) {
+      return 0.0f;
+    }
+    const packed_float3 *verts = attr_P->data<packed_float3>();
+    const array<int> &triangles = _geom->get_triangles();
+    double area = 0.0;
+    for (size_t i = 0; i + 2 < triangles.size(); i += 3) {
+      GfVec3d p[3];
+      for (int k = 0; k < 3; ++k) {
+        const packed_float3 v = verts[triangles[i + k]];
+        p[k] = _geomTransform.Transform(GfVec3d(v.x, v.y, v.z));
+      }
+      area += 0.5 * GfCross(p[1] - p[0], p[2] - p[0]).GetLength();
+    }
+    return float(area);
+  }
+  else {
+    return 0.0f;
+  }
+}
+
+template<typename Base, typename CyclesBase>
+void HdCyclesGeometry<Base, CyclesBase>::UpdateMeshLight(HdSceneDelegate *sceneDelegate,
+                                                         Scene *scene,
+                                                         const HdContainerDataSourceHandle &primDs,
+                                                         HdRenderParam *renderParam)
+{
+  auto *const session = static_cast<HdCyclesSession *>(renderParam);
+  const HdContainerDataSourceHandle lightDs = HdLightSchema::GetFromParent(primDs).GetContainer();
+  if (!lightDs) {
+    if (_lightShader) {
+      /* No longer a light: back to the prim's material. Geometry subsets get theirs back with
+       * the next topology change. */
+      const auto *const material = static_cast<const HdCyclesMaterial *>(
+          sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material,
+                                                   Base::GetMaterialId()));
+      array<Node *> usedShaders(1);
+      usedShaders[0] = material && material->GetCyclesShader() ? material->GetCyclesShader() :
+                                                                 scene->default_surface;
+      static_cast<Shader *>(usedShaders[0])->tag_used(scene);
+      _geom->set_used_shaders(usedShaders);
+      scene->delete_node(_lightShader);
+      _lightShader = nullptr;
+      _lightKey.clear();
+      session->SetMeshLight(this, false);
+    }
+    return;
+  }
+
+  /* The emitted radiance, as for UsdLux's other area lights: colour, intensity and exposure,
+   * the colour temperature's colour, and with normalize, divided by the surface area, in
+   * stage units. */
+  const GfVec3f color = GetTypedValue<GfVec3f>(lightDs, HdLightTokens->color, GfVec3f(1.0f));
+  float radiance = GetTypedValue<float>(lightDs, HdLightTokens->intensity, 1.0f) *
+                   std::exp2(GetTypedValue<float>(lightDs, HdLightTokens->exposure, 0.0f));
+  const bool temperature = GetTypedValue<bool>(
+      lightDs, HdLightTokens->enableColorTemperature, false);
+  const float kelvin = GetTypedValue<float>(lightDs, HdLightTokens->colorTemperature, 6500.0f);
+  if (GetTypedValue<bool>(lightDs, HdLightTokens->normalize, false)) {
+    const float area = SurfaceArea();
+    if (area > 0.0f) {
+      radiance /= area;
+    }
+  }
+
+  const std::string key = TfStringPrintf(
+      "%g %g %g %g %d %g", color[0], color[1], color[2], radiance, int(temperature), kelvin);
+  if (!_lightShader) {
+    _lightShader = scene->create_node<Shader>();
+    _lightShader->name = ustring(Base::GetId().GetString() + ".light");
+    session->SetMeshLight(this, true);
+  }
+  if (key != _lightKey) {
+    _lightKey = key;
+    unique_ptr<ShaderGraph> graph = make_unique<ShaderGraph>();
+    EmissionNode *emission = graph->create_node<EmissionNode>();
+    emission->set_color(make_float3(color[0], color[1], color[2]));
+    emission->set_strength(radiance);
+    if (temperature) {
+      BlackbodyNode *blackbody = graph->create_node<BlackbodyNode>();
+      blackbody->set_temperature(kelvin);
+      VectorMathNode *tint = graph->create_node<VectorMathNode>();
+      tint->set_math_type(NODE_VECTOR_MATH_MULTIPLY);
+      tint->set_vector2(make_float3(color[0], color[1], color[2]));
+      graph->connect(blackbody->output("Color"), tint->input("Vector1"));
+      graph->connect(tint->output("Vector"), emission->input("Color"));
+    }
+    graph->connect(emission->output("Emission"), graph->output()->input("Surface"));
+    _lightShader->set_graph(std::move(graph));
+    _lightShader->tag_update(scene);
+  }
+
+  /* Every face emits, whatever its material or subset. */
+  array<Node *> usedShaders(std::max<size_t>(_geom->get_used_shaders().size(), 1));
+  for (Node *&shader : usedShaders) {
+    shader = _lightShader;
+  }
+  if (!(usedShaders == _geom->get_used_shaders())) {
+    _lightShader->tag_used(scene);
+    _geom->set_used_shaders(usedShaders);
+  }
 }
 
 template<typename Base, typename CyclesBase>

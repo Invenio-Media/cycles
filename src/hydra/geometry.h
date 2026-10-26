@@ -71,6 +71,22 @@ template<typename Base, typename CyclesBase> class HdCyclesGeometry : public Bas
 
   void InitializeInstance(const int index);
 
+  /* UsdLuxMeshLightAPI (a light API on the geometry): the geometry renders with an emission
+   * shader of the light's own instead of its material, and is hidden from the camera, as
+   * Karma has it. */
+  void UpdateMeshLight(PXR_NS::HdSceneDelegate *sceneDelegate,
+                       CCL_NS::Scene *scene,
+                       const PXR_NS::HdContainerDataSourceHandle &primDs,
+                       PXR_NS::HdRenderParam *renderParam);
+
+  /* The geometry's surface area in stage units, through its transform; 0 when it has no
+   * surface. */
+  float SurfaceArea() const;
+
+  // A mesh light's emission shader, and the light settings it was built from.
+  CCL_NS::Shader *_lightShader = nullptr;
+  std::string _lightKey;
+
   PXR_NS::GfMatrix4d _geomTransform;
   // The transform at evenly spaced times across the shutter; empty when it doesn't move.
   std::vector<PXR_NS::GfMatrix4d> _geomMotion;

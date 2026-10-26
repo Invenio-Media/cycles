@@ -8,10 +8,15 @@
 #include "util/log.h"
 #include "util/path.h"
 
+#include <algorithm>
+
 #include <pxr/base/arch/fileSystem.h>
 #include <pxr/base/plug/plugin.h>
 #include <pxr/base/plug/thisPlugin.h>
 #include <pxr/base/tf/envSetting.h>
+#include <pxr/imaging/hd/filteringSceneIndex.h>
+#include <pxr/imaging/hd/lightSchema.h>
+#include <pxr/imaging/hd/materialBindingsSchema.h>
 #include <pxr/imaging/hd/rendererPluginRegistry.h>
 #include <pxr/imaging/hd/retainedDataSource.h>
 #include <pxr/imaging/hd/sceneIndexPluginRegistry.h>
@@ -82,6 +87,76 @@ TF_REGISTRY_FUNCTION(TfType)
   HdRendererPluginRegistry::Define<PXR_NS::HdCyclesPlugin>();
 }
 
+namespace {
+
+/* A mesh light's settings (UsdLuxMeshLightAPI) reach its geometry as a light data source,
+ * which Hydra's dirty bits for rprims don't cover: an edit left the geometry clean. This
+ * dirties the geometry's material bindings as well, so it syncs and rebuilds its light
+ * shader (HdCyclesGeometry::UpdateMeshLight). */
+TF_DECLARE_REF_PTRS(HdCyclesMeshLightSceneIndex);
+
+class HdCyclesMeshLightSceneIndex final : public HdSingleInputFilteringSceneIndexBase {
+ public:
+  static HdCyclesMeshLightSceneIndexRefPtr New(const HdSceneIndexBaseRefPtr &inputScene)
+  {
+    return TfCreateRefPtr(new HdCyclesMeshLightSceneIndex(inputScene));
+  }
+
+  HdSceneIndexPrim GetPrim(const SdfPath &primPath) const override
+  {
+    return _GetInputSceneIndex()->GetPrim(primPath);
+  }
+
+  SdfPathVector GetChildPrimPaths(const SdfPath &primPath) const override
+  {
+    return _GetInputSceneIndex()->GetChildPrimPaths(primPath);
+  }
+
+ protected:
+  void _PrimsAdded(const HdSceneIndexBase & /*sender*/,
+                   const HdSceneIndexObserver::AddedPrimEntries &entries) override
+  {
+    _SendPrimsAdded(entries);
+  }
+
+  void _PrimsRemoved(const HdSceneIndexBase & /*sender*/,
+                     const HdSceneIndexObserver::RemovedPrimEntries &entries) override
+  {
+    _SendPrimsRemoved(entries);
+  }
+
+  void _PrimsDirtied(const HdSceneIndexBase & /*sender*/,
+                     const HdSceneIndexObserver::DirtiedPrimEntries &entries) override
+  {
+    const HdDataSourceLocator &bindings = HdMaterialBindingsSchema::GetDefaultLocator();
+    const auto meshLightEdit = [&](const HdSceneIndexObserver::DirtiedPrimEntry &entry) {
+      return entry.dirtyLocators.Intersects(HdLightSchema::GetDefaultLocator()) &&
+             !entry.dirtyLocators.Intersects(bindings) &&
+             HdPrimTypeIsGprim(_GetInputSceneIndex()->GetPrim(entry.primPath).primType);
+    };
+    const auto first = std::find_if(entries.begin(), entries.end(), meshLightEdit);
+    if (first == entries.end()) {
+      _SendPrimsDirtied(entries);
+      return;
+    }
+    HdSceneIndexObserver::DirtiedPrimEntries dirtied(entries);
+    for (size_t i = first - entries.begin(); i < entries.size(); ++i) {
+      if (meshLightEdit(entries[i])) {
+        dirtied[i].dirtyLocators.insert(bindings);
+      }
+    }
+    _SendPrimsDirtied(dirtied);
+  }
+
+ private:
+  explicit HdCyclesMeshLightSceneIndex(const HdSceneIndexBaseRefPtr &inputScene)
+      : HdSingleInputFilteringSceneIndexBase(inputScene)
+  {
+  }
+};
+
+}  // namespace
+
 // Cycles has no implicit surfaces, so turn UsdGeom spheres, cubes, cones, cylinders, capsules
 // and planes into meshes before they reach the delegate, as Storm and HdPrman do.
 TF_REGISTRY_FUNCTION(HdSceneIndexPlugin)
@@ -135,6 +210,18 @@ TF_REGISTRY_FUNCTION(HdSceneIndexPlugin)
          const HdSceneIndexBaseRefPtr &inputScene,
          const HdContainerDataSourceHandle &inputArgs) -> HdSceneIndexBaseRefPtr {
         return HdsiVelocityMotionResolvingSceneIndex::New(inputScene, inputArgs);
+      },
+      nullptr,
+      0,
+      HdSceneIndexPluginRegistry::InsertionOrderAtStart);
+
+  // Mesh light edits, as edits of the geometry (HdCyclesMeshLightSceneIndex).
+  HdSceneIndexPluginRegistry::GetInstance().RegisterSceneIndexForRenderer(
+      "Cycles",
+      [](const std::string & /*renderInstanceId*/,
+         const HdSceneIndexBaseRefPtr &inputScene,
+         const HdContainerDataSourceHandle & /*inputArgs*/) -> HdSceneIndexBaseRefPtr {
+        return HdCyclesMeshLightSceneIndex::New(inputScene);
       },
       nullptr,
       0,
