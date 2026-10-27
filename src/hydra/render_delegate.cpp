@@ -106,6 +106,9 @@ const std::unordered_set<std::string> kIntegratorExcluded = {
     "sample_subset_offset",
     "sample_subset_length",
     "motion_blur",
+    // Reads the pixel jitter from custom_pixel_jitter_sample, an array no setting can author:
+    // on, Cycles read past the empty array.
+    "use_custom_pixel_jitter_sample",
 };
 
 // Film socket names exposed through cycles:film:<name>
@@ -1134,6 +1137,12 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     static const int max_samples = Integrator::MAX_SAMPLES;
     int samples = VtValue::Cast<int>(value).GetWithDefault(session->params.samples);
     samples = std::min(std::max(1, samples), max_samples);
+    /* More samples carry on from the ones rendered, as in Blender's viewport. Fewer start the
+     * render again: otherwise a render that had already passed the new count kept its samples,
+     * and a husk frame that lowered them rendered as the frame before. */
+    if (samples < session->params.samples) {
+      ++_settingsVersion;
+    }
     session->set_samples(samples);
     _appliedSettings[key] = value;
     return;
@@ -1191,6 +1200,12 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
       if (const SocketType *socket = scene->integrator->type->find_input(socketName)) {
         if (!kIntegratorExcluded.count(socketName.string())) {
           SetNodeValue(scene->integrator, *socket, value);
+          /* The light manager decides whether the kernel uses the light tree, and Cycles
+           * leaves it to the host to tag it when use_light_tree changes: an edit otherwise
+           * kept the old light sampling. */
+          if (scene->integrator->use_light_tree_is_modified()) {
+            scene->light_manager->tag_update(scene, LightManager::UPDATE_ALL);
+          }
           _appliedSettings[key] = value;
           ++_settingsVersion;
         }

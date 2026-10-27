@@ -465,7 +465,20 @@ void SetNodeValue(Node *node, const SocketType &socket, const VtValue &value)
     case SocketType::ENUM:
       // Enum's can accept a string or an int
       if (value.IsHolding<TfToken>() || value.IsHolding<std::string>()) {
-        node->set(socket, convertToCycles<ustring>(value));
+        const ustring name = convertToCycles<ustring>(value);
+        if (!socket.enum_values->exists(name)) {
+          /* Cycles would ignore it without a word. */
+          std::string names;
+          for (const auto &[enumName, enumValue] : *socket.enum_values) {
+            names += (names.empty() ? "" : ", ") + enumName.string();
+          }
+          HDCYCLES_WARN("'%s' is not a value of %s (%s); ignored",
+                        name.c_str(),
+                        socket.name.c_str(),
+                        names.c_str());
+          break;
+        }
+        node->set(socket, name);
       }
       else {
         node->set(socket, convertToCycles<int>(value));
