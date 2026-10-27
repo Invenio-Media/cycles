@@ -250,7 +250,8 @@ namespace {
 /* An IES profile's power, as UsdLux's shaping:ies:normalize divides by it: the intensity
  * integrated over the solid angle the profile covers, divided by that whole sphere's or
  * hemisphere's solid angle. The same integration as USD's reference (hdEmbree's PxrIESFile,
- * which "matches Karma & RIS"), over the profile as Cycles loads it. */
+ * which "matches Karma & RIS"), over the profile as Cycles loads it: IESFile::load has
+ * already mirrored a symmetric profile's horizontal angles round the whole circle. */
 class HdCyclesIesProfile : public IESFile {
  public:
   float Power() const
@@ -385,9 +386,14 @@ ShaderOutput *Shaping(ShaderGraph *graph,
   const float focus = GetTypedValue<float>(lightContainer, HdLightTokens->shapingFocus, 0.0f);
   const GfVec3f tint = GetTypedValue<GfVec3f>(
       lightContainer, HdLightTokens->shapingFocusTint, GfVec3f(0.0f));
-  const auto coneAngle = GetTypedDataSource<float>(lightContainer,
-                                                   HdLightTokens->shapingConeAngle);
-  const bool hasCone = cone && coneAngle && coneAngle->GetTypedValue(0.0f) < 180.0f;
+  /* Karma shapes an area light only with a cone narrower than the hemisphere it already
+   * lights: at 90 degrees or more, softness changes nothing, authored or not (compared with
+   * softness alone, and with 90 and 0.5). */
+  const float coneAngle = std::clamp(
+      GetTypedValue<float>(lightContainer, HdLightTokens->shapingConeAngle, 90.0f), 0.0f, 180.0f);
+  const float softness = std::clamp(
+      GetTypedValue<float>(lightContainer, HdLightTokens->shapingConeSoftness, 0.0f), 0.0f, 1.0f);
+  const bool hasCone = cone && coneAngle < 90.0f;
   if (focus <= 0.0f && !hasCone) {
     return nullptr;
   }
@@ -413,11 +419,7 @@ ShaderOutput *Shaping(ShaderGraph *graph,
   }
 
   if (hasCone) {
-    const float cutoff = GfDegreesToRadians(std::max(coneAngle->GetTypedValue(0.0f), 0.0f));
-    const float softness = std::clamp(
-        GetTypedValue<float>(lightContainer, HdLightTokens->shapingConeSoftness, 0.0f),
-        0.0f,
-        1.0f);
+    const float cutoff = GfDegreesToRadians(coneAngle);
     MathNode *theta = AddMath(graph, NODE_MATH_ARCCOSINE);
     graph->connect(cosine->output("Value"), theta->input("Value1"));
     ShaderOutput *attenuation;
@@ -474,11 +476,12 @@ void HdCyclesLight::ApplyIes(ShaderGraph *graph,
   iesNode->set_filename(ustring(filename));
   graph->connect(direction, iesNode->input("Vector"));
 
-  /* Cycles loads a profile's candelas converted to watts per steradian (times 4 pi / 177.83,
-   * for D65's luminous efficacy). UsdLux scales the light by the candelas themselves, as Karma
-   * does; normalized, by the candelas over the profile's power, where the conversion
-   * cancels. */
-  float scale = 1.0f / 0.0706650768394f;
+  /* Cycles loads a profile's candelas converted to watts per steradian (IESFile::parse, times
+   * 4 pi / 177.83, for D65's luminous efficacy). UsdLux scales the light by the candelas
+   * themselves, as Karma does; normalized, by the candelas over the profile's power, where the
+   * conversion cancels. */
+  constexpr float wattsPerSteradianPerCandela = 4.0f * M_PI_F / 177.83f;
+  float scale = 1.0f / wattsPerSteradianPerCandela;
   if (GetTypedValue<bool>(lightContainer, HdLightTokens->shapingIesNormalize, false)) {
     string text;
     HdCyclesIesProfile profile;

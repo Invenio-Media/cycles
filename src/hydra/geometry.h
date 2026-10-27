@@ -79,8 +79,8 @@ template<typename Base, typename CyclesBase> class HdCyclesGeometry : public Bas
                        const PXR_NS::HdContainerDataSourceHandle &primDs,
                        PXR_NS::HdRenderParam *renderParam);
 
-  /* The geometry's surface area in stage units, through its transform; 0 when it has no
-   * surface. */
+  /* The geometry's surface area in stage units, through its transform, for a mesh light's
+   * normalize; 0 for curves, points and volumes, which then aren't normalized. */
   float SurfaceArea() const;
 
   // A mesh light's emission shader, and the light settings it was built from.

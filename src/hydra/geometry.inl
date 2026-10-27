@@ -294,14 +294,15 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
      * this, with the same parser. */
     const bool objectSpace = _geom->is_volume() && HdCyclesVolumeObjectSpace(read("volume:space"));
     const float densityScale = objectSpace ? 1.0f : 1.0f / _metersPerUnit;
-    /* A mesh light, as Karma renders it: seen only through the light it gives, unless
-     * cycles:object:visibility:camera (or the light's visibleInPrimaryRay) asks for it. */
+    /* A mesh light, as Karma renders it: hidden from the camera, unless
+     * cycles:object:visibility:camera (or the light's visibleInPrimaryRay) asks for it, but
+     * casting shadows. */
     unsigned visibility = visible ? PATH_RAY_VISIBILITY_ALL : 0;
     if (const HdContainerDataSourceHandle lightDs =
             HdLightSchema::GetFromParent(primDs).GetContainer())
     {
       static const TfToken visibleInPrimaryRay("visibleInPrimaryRay");
-      visibility &= ~(PATH_RAY_VISIBILITY_CAMERA | PATH_RAY_VISIBILITY_SHADOW);
+      visibility &= ~PATH_RAY_VISIBILITY_CAMERA;
       if (visible &&
           HdCyclesSettingValue<bool>(read("visibility:camera"),
                                      GetTypedValue<bool>(lightDs, visibleInPrimaryRay, false)))
