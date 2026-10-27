@@ -607,8 +607,12 @@ void HdCyclesLight::PopulateShaderGraph(const HdContainerDataSourceHandle &light
           /* UsdLux's latlong, as Karma maps it: +Y at the top of the image, and -Z at its
            * left edge, turning towards +X. Cycles' equirectangular map has +Z at the top and
            * -X at the left edge, so the dome's own directions go through (x, y, z) ->
-           * (z, x, y) on their way to the texture. */
-          Transform tfm = _object->get_tfm();
+           * (z, x, y) on their way to the texture. A DomeLight_1 turns its pole to its
+           * poleAxis (or the stage's up axis), a rotation UsdImaging hands over as the dome
+           * offset, applied to the dome before its transform. */
+          Transform tfm = _object->get_tfm() *
+                          convert_transform(GetTypedValue<GfMatrix4d>(
+                              lightContainer, HdLightTokens->domeOffset, GfMatrix4d(1.0)));
           transform_set_column(&tfm, 3, zero_float3());  // Remove translation
           const Transform toDome = make_transform(0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0);
 
