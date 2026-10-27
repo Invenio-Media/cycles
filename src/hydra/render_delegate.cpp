@@ -30,6 +30,7 @@
 #include "session/session.h"
 #include "util/colorspace.h"
 
+#include <pxr/base/arch/fileSystem.h>
 #include <pxr/base/tf/getenv.h>
 #include <pxr/base/vt/array.h>
 #include <pxr/imaging/hgi/tokens.h>
@@ -63,6 +64,9 @@ TF_DEFINE_PRIVATE_TOKENS(_tokens,
     (instantaneousShutter)
     // The render camera, which Houdini's viewport and husk name.
     (renderCameraPath)
+    // How the host renders: husk sends "batch".
+    (renderMode)
+    (batch)
 );
 // clang-format on
 
@@ -315,8 +319,15 @@ std::pair<SessionParams, std::string> HdCyclesDelegate::BuildSessionParams() con
   }
 
   // Tile settings
-  params.use_auto_tile = true;
+  /* A batch render (husk) tiles a frame larger than a tile, to save memory, as Blender's final
+   * renders do; the viewport renders the whole frame progressively, as Blender's does. The
+   * setting overrides either. */
+  params.use_auto_tile = _batch;
   params.tile_size = 2048;
+  /* A frame larger than a tile renders tile by tile, each written to a file Cycles reads back
+   * at the end (HdCyclesSession); the files go to the temporary folder, not the working
+   * directory husk or Houdini runs in. */
+  params.temp_dir = ArchGetTmpDir();
   {
     auto it = _restartSettings.find(HdCyclesRenderSettingsTokens->sessionUseAutoTile);
     if (it != _restartSettings.end()) {
@@ -521,10 +532,17 @@ HdCyclesDelegate::HdCyclesDelegate(const HdRenderSettingsMap &settingsMap,
 void HdCyclesDelegate::ApplyRenderingColorSpace(std::string colorSpace)
 {
   _requestedColorSpace = colorSpace;
-  if (!CCL_NS::ColorSpaceManager::set_scene_linear_colorspace(colorSpace)) {
-    HDCYCLES_WARN(
-        "Rendering color space '%s' is not in the OCIO config, using its scene_linear role",
-        colorSpace.c_str());
+  /* A name already found missing isn't looked up again: a session rebuild applies it again,
+   * and Cycles warns on each lookup. */
+  if (colorSpace == _unknownColorSpace ||
+      !CCL_NS::ColorSpaceManager::set_scene_linear_colorspace(colorSpace))
+  {
+    if (colorSpace != _unknownColorSpace) {
+      HDCYCLES_WARN(
+          "Rendering color space '%s' is not in the OCIO config, using its scene_linear role",
+          colorSpace.c_str());
+      _unknownColorSpace = colorSpace;
+    }
     colorSpace.clear();
     CCL_NS::ColorSpaceManager::set_scene_linear_colorspace(colorSpace);
   }
@@ -1053,6 +1071,21 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
       ++_settingsVersion;
       return;
     }
+  }
+
+  /* husk renders in batch mode, Houdini's viewport interactively; only a batch render tiles by
+   * default (BuildSessionParams). husk sends it before the scene, when the session can still be
+   * rebuilt. */
+  if (key == _tokens->renderMode) {
+    _batch = value.IsHolding<TfToken>() ?
+                 value.UncheckedGet<TfToken>() == _tokens->batch :
+                 VtValue::Cast<std::string>(value).GetWithDefault(std::string()) ==
+                     _tokens->batch.GetString();
+    if (CanRebuildSession() && BuildSessionParams().first.modified(_renderParam->session->params))
+    {
+      RebuildSession();
+    }
+    return;
   }
 
   if (IsRestartOnlyKey(key)) {

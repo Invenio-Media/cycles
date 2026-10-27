@@ -17,6 +17,7 @@
 #include "scene/shader_graph.h"
 #include "scene/shader_nodes.h"
 #include "session/session.h"
+#include "util/path.h"
 
 #include <unordered_set>
 
@@ -168,6 +169,17 @@ HdCyclesSession::HdCyclesSession(const SessionParams &params, const SceneParams 
     : session(new Session(params, sceneParams)), keep_nodes(false), _ownCyclesSession(true)
 {
   Scene *const scene = session->scene.get();
+
+  /* A tiled render (a frame larger than the session's tile size) writes each tile to a file,
+   * and hands the whole frame back only through this: the frame is read from the file and
+   * written to the render buffers, as Blender does, which marks them converged. Without it,
+   * husk waited for convergence forever on a frame larger than 2048x2048 pixels, and the
+   * files were left behind. */
+  session->full_buffer_written_cb = [this](string_view filename) {
+    const string path(filename);
+    session->process_full_buffer_from_disk(path);
+    path_remove(path);
+  };
 
   // Create background with ambient light
   {

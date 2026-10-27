@@ -120,6 +120,8 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
 
  private:
   PXR_NS::Hgi *_hgi = nullptr;
+  // A batch render (husk's renderMode), which tiles large frames by default.
+  bool _batch = false;
   std::unique_ptr<HdCyclesSession> _renderParam;
   // Working colorspace from UsdRenderSettings.renderingColorSpace; empty means the OCIO
   // config's scene_linear role.
@@ -127,6 +129,8 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
   // The renderingColorSpace value last received, which differs from _renderingColorSpace
   // when it named a colorspace the config does not have.
   std::string _requestedColorSpace;
+  // The last rendering color space not in the OCIO config, warned about once.
+  std::string _unknownColorSpace;
 
   // Whether the background should be kept transparent even when a dome light is present.
   bool _filmTransparent = false;
