@@ -20,6 +20,8 @@
 
 #include <unordered_set>
 
+#include <pxr/imaging/hd/renderBuffer.h>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 namespace {
@@ -27,6 +29,7 @@ namespace {
 // clang-format off
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
     (sourceName)
+    (dataType)
 );
 // clang-format on
 
@@ -120,6 +123,24 @@ TfToken GetSourceName(const HdRenderPassAovBinding &aovBinding)
     }
   }
   return aovBinding.aovName;
+}
+
+/* Whether a shader AOV binding wants Cycles' value pass rather than its colour pass: from the
+ * RenderVar's dataType, as husk passes it, or else from the buffer the host made. */
+bool IsScalarAov(const HdRenderPassAovBinding &aovBinding)
+{
+  const auto setting = aovBinding.aovSettings.find(_tokens->dataType);
+  if (setting != aovBinding.aovSettings.end()) {
+    const VtValue &value = setting->second;
+    const std::string dataType = value.IsHolding<TfToken>() ?
+                                     value.UncheckedGet<TfToken>().GetString() :
+                                     VtValue::Cast<std::string>(value).GetWithDefault(
+                                         std::string());
+    if (!dataType.empty()) {
+      return dataType == "float" || dataType == "half";
+    }
+  }
+  return aovBinding.renderBuffer && HdGetComponentCount(aovBinding.renderBuffer->GetFormat()) == 1;
 }
 
 }  // namespace
@@ -408,6 +429,20 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
         pass->set_mode(PassMode::DENOISED);
         pass->set_name(ustring(source));
         pass->set_lightgroup(ustring(source.substr(strlen("lightgroup:"))));
+      }
+      continue;
+    }
+
+    /* cycles:aov:<name> is the shader AOV that AOV Output nodes named <name> write: Cycles'
+     * value pass for a float RenderVar, its colour pass otherwise. */
+    if (source.starts_with("cycles:aov:") && source.size() > strlen("cycles:aov:")) {
+      aovPass.passName = source.substr(strlen("cycles:aov:"));
+      const PassType type = IsScalarAov(aovBindings[i]) ? PASS_AOV_VALUE : PASS_AOV_COLOR;
+      if (createdPasses.insert(aovPass.passName).second) {
+        Pass *pass = scene->create_node<Pass>();
+        pass->set_type(type);
+        pass->set_mode(PassMode::NOISY);
+        pass->set_name(ustring(aovPass.passName));
       }
       continue;
     }

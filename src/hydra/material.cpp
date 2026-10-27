@@ -1254,6 +1254,15 @@ void HdCyclesMaterial::PopulateShaderGraph(HdMaterialNetworkSchema network)
 
     ShaderNode *const node = nodeIt->second.node;
 
+    /* A shader AOV (an AOV Output node) is a terminal of its own, so that Hydra keeps the
+     * node, which nothing else connects to; the Cycles shader translator authors it as
+     * outputs:cycles:aov_<node>. (Hydra drops outputs namespaced deeper, such as
+     * outputs:cycles:aov:<name>.) Cycles keeps an AOV output node in the graph without a
+     * connection to the material output. */
+    if (node->special_type == SHADER_SPECIAL_TYPE_OUTPUT_AOV) {
+      continue;
+    }
+
     const char *inputName = nullptr;
     const char *outputName = nullptr;
 
