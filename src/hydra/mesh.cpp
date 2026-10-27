@@ -166,6 +166,7 @@ void HdCyclesMesh::UpdateDicing(Scene *scene)
   }
   _geom->set_subd_objecttoworld(tfm);
   _dicedSize = size;
+  ResetTessellation();
 }
 
 HdDirtyBits HdCyclesMesh::GetInitialDirtyBitsMask() const
@@ -233,6 +234,7 @@ void HdCyclesMesh::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyBit
   if (settingsDirty) {
     ApplySubdivisionSettings();
   }
+  ResetTessellation();
 
   /* A re-tessellated subdivision mesh can have a different number of triangles, so its BVH is
    * rebuilt, not refit: new dicing settings or new points re-tessellate it. A move only
@@ -750,6 +752,24 @@ void HdCyclesMesh::ApplySubdivisionSettings()
   _geom->set_subd_max_level(_topology.GetRefineLevel());
   _geom->set_subd_adaptive_space(_subdObjectSpace ? Mesh::SUBDIVISION_ADAPTIVE_SPACE_OBJECT :
                                                     Mesh::SUBDIVISION_ADAPTIVE_SPACE_PIXEL);
+}
+
+/* Cycles tessellates into the mesh's own vertices and triangles, and takes the vertices the
+ * mesh holds when it starts as the base mesh's (EdgeDice counts the ones it adds from them), as
+ * a Blender mesh is each time it re-dices, being synced anew. A mesh re-tessellated while it
+ * still held its last tessellation, after a re-dice or new points, had the old diced vertices
+ * counted as base ones, and Cycles read past the base positions: Houdini crashed in
+ * OsdData::build or in the attribute interpolation. The base positions are the subdivision
+ * positions, which stay as they were populated. */
+void HdCyclesMesh::ResetTessellation()
+{
+  if (_geom->get_subdivision_type() == Mesh::SUBDIVISION_NONE || !_geom->need_tesselation()) {
+    return;
+  }
+  const size_t baseVerts = size_t(_topology.GetNumPoints());
+  if (_geom->num_verts() != baseVerts || !_geom->get_triangles().empty()) {
+    _geom->resize_mesh(int(baseVerts), 0);
+  }
 }
 
 void HdCyclesMesh::Finalize(PXR_NS::HdRenderParam *renderParam)

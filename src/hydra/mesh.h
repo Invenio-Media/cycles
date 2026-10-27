@@ -53,6 +53,10 @@ class HdCyclesMesh final : public HdCyclesGeometry<PXR_NS::HdMesh, CCL_NS::Mesh>
   // Sets the Cycles mesh's dicing parameters from them.
   void ApplySubdivisionSettings();
 
+  /* Before Cycles tessellates a subdivision mesh again, returns it to its base vertices and no
+   * triangles, as Cycles expects (see mesh.cpp). */
+  void ResetTessellation();
+
   PXR_NS::HdMeshUtil _util;
   PXR_NS::HdMeshTopology _topology;
   PXR_NS::VtIntArray _primitiveParams;
