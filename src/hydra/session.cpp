@@ -407,6 +407,7 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
   }
 
   std::unordered_set<std::string> createdPasses;
+  std::unordered_map<std::string, PassType> shaderAovs;
   for (size_t i = 0; i < aovBindings.size(); ++i) {
     const TfToken sourceName = GetSourceName(aovBindings[i]);
     HdCyclesAovPass &aovPass = _aovPasses[i];
@@ -434,10 +435,19 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
     }
 
     /* cycles:aov:<name> is the shader AOV that AOV Output nodes named <name> write: Cycles'
-     * value pass for a float RenderVar, its colour pass otherwise. */
-    if (source.starts_with("cycles:aov:") && source.size() > strlen("cycles:aov:")) {
-      aovPass.passName = source.substr(strlen("cycles:aov:"));
+     * value pass for a float RenderVar, its colour pass otherwise. Cycles reads a pass by its
+     * name, so a name has one type: the first binding's. */
+    constexpr std::string_view shaderAov = "cycles:aov:";
+    if (source.starts_with(shaderAov) && source.size() > shaderAov.size()) {
+      aovPass.passName = source.substr(shaderAov.size());
       const PassType type = IsScalarAov(aovBindings[i]) ? PASS_AOV_VALUE : PASS_AOV_COLOR;
+      const auto [known, added] = shaderAovs.emplace(aovPass.passName, type);
+      if (!added && known->second != type) {
+        HDCYCLES_WARN(
+            "The shader AOV %s is bound both as a value and as a colour; it renders "
+            "as the first binding's",
+            aovPass.passName.c_str());
+      }
       if (createdPasses.insert(aovPass.passName).second) {
         Pass *pass = scene->create_node<Pass>();
         pass->set_type(type);
