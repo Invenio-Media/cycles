@@ -1203,7 +1203,7 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
           /* The light manager decides whether the kernel uses the light tree, and Cycles
            * leaves it to the host to tag it when use_light_tree changes: an edit otherwise
            * kept the old light sampling. */
-          if (scene->integrator->use_light_tree_is_modified()) {
+          if (socketName == "use_light_tree" && scene->integrator->use_light_tree_is_modified()) {
             scene->light_manager->tag_update(scene, LightManager::UPDATE_ALL);
           }
           _appliedSettings[key] = value;
