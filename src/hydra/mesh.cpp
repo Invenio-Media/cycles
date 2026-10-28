@@ -236,6 +236,23 @@ void HdCyclesMesh::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyBit
   }
   ResetTessellation();
 
+  /* Cycles dices only subdivision meshes; a polygon mesh's true displacement moves its
+   * vertices and nothing between them, where Karma dices it. Said once, with the remedy. */
+  if (!_warnedUndiced && _geom->get_subdivision_type() == Mesh::SUBDIVISION_NONE) {
+    for (const Node *node : _geom->get_used_shaders()) {
+      const Shader *const shader = static_cast<const Shader *>(node);
+      if (shader->has_displacement && shader->get_displacement_method() != DISPLACE_BUMP) {
+        HDCYCLES_WARN(
+            "%s: its material's true displacement moves only the mesh's vertices, since "
+            "Cycles dices only subdivision surfaces; set its subdivisionScheme to bilinear "
+            "or catmullClark to displace between them",
+            GetId().GetText());
+        _warnedUndiced = true;
+        break;
+      }
+    }
+  }
+
   /* A re-tessellated subdivision mesh can have a different number of triangles, so its BVH is
    * rebuilt, not refit: new dicing settings or new points re-tessellate it. A move only
    * re-tessellates it when it changes the mesh's size on screen enough (UpdateDicing). */
@@ -434,7 +451,13 @@ void HdCyclesMesh::PopulatePrimvars(HdSceneDelegate *sceneDelegate)
           }
         }
 
-        ApplyPrimvars(attributes, name, value, interpolation.second, std);
+        Attribute *const attr = ApplyPrimvars(attributes, name, value, interpolation.second, std);
+        /* USD interpolates a vertex primvar by the subdivision scheme, as the points are, as
+         * Karma does, and a varying one linearly (Karma smooths that too); Cycles' default for
+         * both is linear. */
+        if (attr && subdivision && interpolation.first == HdInterpolationVertex) {
+          attr->flags |= ATTR_SUBDIVIDE_SMOOTH_VERTEX;
+        }
       }
     }
   }

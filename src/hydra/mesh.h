@@ -74,6 +74,8 @@ class HdCyclesMesh final : public HdCyclesGeometry<PXR_NS::HdMesh, CCL_NS::Mesh>
   float _dicedSize = 0.0f;
   // Whether it's registered with the session as pixel-diced.
   bool _pixelDiced = false;
+  // Warned that the mesh's true displacement only moves its vertices.
+  bool _warnedUndiced = false;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

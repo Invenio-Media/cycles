@@ -94,11 +94,11 @@ TfTokenVector PrimvarNamesAtInterpolation(const HdPrimvarsSchema &primvars,
   return result;
 }
 
-void ApplyPrimvars(AttributeSet &attributes,
-                   const ustring &name,
-                   VtValue value,
-                   AttributeElement elem,
-                   AttributeStandard std)
+Attribute *ApplyPrimvars(AttributeSet &attributes,
+                         const ustring &name,
+                         VtValue value,
+                         AttributeElement elem,
+                         AttributeStandard std)
 {
   /* A constant primvar authored as a scalar, such as float primvars:x = 0.3, holds no array:
    * one element, so the attribute gets its data. */
@@ -163,7 +163,7 @@ void ApplyPrimvars(AttributeSet &attributes,
       break;
     default:
       HDCYCLES_WARN("Unsupported attribute type %d", static_cast<int>(valueType));
-      return;
+      return nullptr;
   }
 
   Attribute *const attr = attributes.add(name, attrType, elem);
@@ -171,6 +171,7 @@ void ApplyPrimvars(AttributeSet &attributes,
 
   assert(size == attr->data_sizeof() * attr->size);
   std::memcpy(attr->data_for_write(), data, size);
+  return attr;
 }
 
 std::vector<float> ShutterTimes(const float shutterOpen, const float shutterClose, const int steps)

@@ -87,11 +87,12 @@ PXR_NS::TfToken ReadPrimvarRole(const PXR_NS::HdPrimvarsSchema &primvars,
 PXR_NS::TfTokenVector PrimvarNamesAtInterpolation(const PXR_NS::HdPrimvarsSchema &primvars,
                                                   PXR_NS::HdInterpolation interpolation);
 
-/* Convert a Hydra primvar value to a Cycles attribute. */
-void ApplyPrimvars(CCL_NS::AttributeSet &attributes,
-                   const CCL_NS::ustring &name,
-                   PXR_NS::VtValue value,
-                   CCL_NS::AttributeElement elem,
-                   CCL_NS::AttributeStandard std);
+/* Convert a Hydra primvar value to a Cycles attribute; the attribute, or null for a type
+ * Cycles has none for. */
+CCL_NS::Attribute *ApplyPrimvars(CCL_NS::AttributeSet &attributes,
+                                 const CCL_NS::ustring &name,
+                                 PXR_NS::VtValue value,
+                                 CCL_NS::AttributeElement elem,
+                                 CCL_NS::AttributeStandard std);
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

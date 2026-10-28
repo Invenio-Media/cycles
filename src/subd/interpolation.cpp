@@ -567,7 +567,8 @@ void SubdAttributeInterpolation::setup_attribute_type(const Attribute &subd_attr
       if (subd_attr.std != ATTR_STD_POSITION) {
 #ifdef WITH_OPENSUBDIV
         if (mesh.get_subdivision_type() == Mesh::SUBDIVISION_CATMULL_CLARK) {
-          /* Only smoothly interpolation known position-like attributes. */
+          /* Only smoothly interpolation known position-like attributes, and those asked to be
+           * interpolated as positions are. */
           switch (subd_attr.std) {
             case ATTR_STD_GENERATED:
             case ATTR_STD_POSITION_UNDEFORMED:
@@ -575,7 +576,12 @@ void SubdAttributeInterpolation::setup_attribute_type(const Attribute &subd_attr
               setup_attribute_vertex_smooth<T>(subd_attr, mesh_attr);
               break;
             default:
-              setup_attribute_vertex_linear<T>(subd_attr, mesh_attr);
+              if (subd_attr.flags & ATTR_SUBDIVIDE_SMOOTH_VERTEX) {
+                setup_attribute_vertex_smooth<T>(subd_attr, mesh_attr);
+              }
+              else {
+                setup_attribute_vertex_linear<T>(subd_attr, mesh_attr);
+              }
               break;
           }
         }
