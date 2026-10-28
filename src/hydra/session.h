@@ -186,10 +186,11 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   /* Where the rendered data window starts in a render buffer of the given height, which the
    * output driver places Cycles' tiles from. Buffers run bottom up. husk's buffers are the data
    * window; a host's start at the framing's origin, top down, and hold the data window where
-   * the framing says. Read under GetAovMutex(). */
+   * the framing says; the origin before any render pass has set it. Read under
+   * GetAovMutex(), which also guards the buffers' size. */
   PXR_NS::GfVec2i GetDataWindowOrigin(const int bufferHeight) const
   {
-    if (_buffersAtDataWindow) {
+    if (_buffersAtDataWindow || _dataWindow.IsEmpty()) {
       return PXR_NS::GfVec2i(0);
     }
     return PXR_NS::GfVec2i(_dataWindow.GetMinX(), bufferHeight - (_dataWindow.GetMaxY() + 1));

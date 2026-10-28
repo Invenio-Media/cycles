@@ -23,6 +23,7 @@
 
 #include <pxr/imaging/hd/renderPassState.h>
 
+#include <algorithm>
 #include <cmath>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
