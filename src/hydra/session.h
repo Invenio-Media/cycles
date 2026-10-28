@@ -138,6 +138,10 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   void RemoveCameraShutter(const PXR_NS::SdfPath &camera);
   // A rebuilt session keeps the cameras, which don't hold it back from rebuilding.
   void TakeCameras(HdCyclesSession &previous);
+  // A host clearing the shutter's open or close setting (Houdini's viewport does, for a render
+  // settings prim that doesn't author them): the render camera's shutter applies again.
+  // Returns whether the shutter changed.
+  bool ClearShutterSettings();
 
   double GetStageMetersPerUnit() const
   {

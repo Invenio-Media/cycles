@@ -319,6 +319,20 @@ void HdCyclesSession::RemoveCameraShutter(const SdfPath &camera)
   _cameraShutters.erase(camera);
 }
 
+bool HdCyclesSession::ClearShutterSettings()
+{
+  const thread_scoped_lock lock(_cameraMutex);
+  {
+    const thread_scoped_lock shutterLock(_shutterMutex);
+    shutter.fromSettings = false;
+  }
+  HdCyclesShutter next = GetShutter();
+  const auto it = _cameraShutters.find(_renderCamera);
+  next.open = it != _cameraShutters.end() ? it->second.first : 0.0f;
+  next.close = it != _cameraShutters.end() ? it->second.second : 0.0f;
+  return UpdateShutter(next);
+}
+
 void HdCyclesSession::TakeCameras(HdCyclesSession &previous)
 {
   const thread_scoped_lock lock(_cameraMutex);

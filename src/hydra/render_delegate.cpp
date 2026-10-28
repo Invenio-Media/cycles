@@ -1003,6 +1003,24 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
   {
     HdCyclesShutter &shutter = _renderParam->shutter;
     const bool flag = key == _tokens->disableMotionBlur || key == _tokens->instantaneousShutter;
+    /* An empty value is a setting the host cleared (Houdini's viewport sends them for a render
+     * settings prim that doesn't author them): the shutter's open and close go back to the
+     * render camera's, the flags to off. */
+    if (value.IsEmpty()) {
+      bool changed;
+      if (flag) {
+        HdCyclesShutter next = shutter;
+        (key == _tokens->disableMotionBlur ? next.disableMotionBlur : next.instantaneous) = false;
+        changed = _renderParam->UpdateShutter(next);
+      }
+      else {
+        changed = _renderParam->ClearShutterSettings();
+      }
+      if (changed) {
+        ++_settingsVersion;
+      }
+      return;
+    }
     const VtValue cast = flag ? VtValue::Cast<bool>(value) : VtValue::Cast<double>(value);
     if (cast.IsEmpty()) {
       HDCYCLES_WARN("Render setting %s has an unexpected type, %s; ignored.",
@@ -1037,15 +1055,22 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
    * pass frames from it (HdCyclesRenderPass::_Execute). */
   {
     HdCyclesProductFraming &framing = _renderParam->productFraming;
+    /* An empty value is a setting the host cleared, as for the shutter: back to the default,
+     * and with no resolution, no product framing. */
+    const HdCyclesProductFraming defaults;
+    const bool cleared = value.IsEmpty();
     bool framingKey = true;
-    if (key == _tokens->resolution && value.IsHolding<GfVec2i>()) {
-      framing.resolution = value.UncheckedGet<GfVec2i>();
+    if (key == _tokens->resolution && (cleared || value.IsHolding<GfVec2i>())) {
+      framing.resolution = cleared ? defaults.resolution : value.UncheckedGet<GfVec2i>();
     }
-    else if (key == _tokens->dataWindowNDC && value.IsHolding<GfVec4f>()) {
-      framing.dataWindowNDC = value.UncheckedGet<GfVec4f>();
+    else if (key == _tokens->dataWindowNDC && (cleared || value.IsHolding<GfVec4f>())) {
+      framing.dataWindowNDC = cleared ? defaults.dataWindowNDC : value.UncheckedGet<GfVec4f>();
     }
-    else if (key == _tokens->pixelAspectRatio && value.IsHolding<float>()) {
-      framing.pixelAspectRatio = value.UncheckedGet<float>();
+    else if (key == _tokens->pixelAspectRatio && (cleared || value.IsHolding<float>())) {
+      framing.pixelAspectRatio = cleared ? defaults.pixelAspectRatio : value.UncheckedGet<float>();
+    }
+    else if (key == _tokens->aspectRatioConformPolicy && cleared) {
+      framing.windowPolicy = defaults.windowPolicy;
     }
     else if (key == _tokens->aspectRatioConformPolicy && value.IsHolding<TfToken>()) {
       /* UsdRender's policies, as CameraUtil's. adjustPixelAspectRatio maps the aperture onto
