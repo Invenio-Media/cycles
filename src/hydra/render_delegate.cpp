@@ -388,8 +388,10 @@ std::pair<SessionParams, std::string> HdCyclesDelegate::BuildSessionParams() con
     const DeviceType type = Device::type_from_string(deviceType.c_str());
     vector<DeviceInfo> devs = Device::available_devices(DEVICE_MASK(type));
     if (devs.empty()) {
-      HDCYCLES_WARN("Cycles: device type '%s' has no available devices; falling back to CPU",
-                    deviceType.c_str());
+      if (_warnedNoDevice.insert(deviceType).second) {
+        HDCYCLES_WARN("Cycles: device type '%s' has no available devices; falling back to CPU",
+                      deviceType.c_str());
+      }
       devs = Device::available_devices(DEVICE_MASK_CPU);
       effectiveDeviceType = Device::string_from_type(DEVICE_CPU);
     }

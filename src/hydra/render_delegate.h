@@ -150,6 +150,9 @@ class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
 
   // Keys for which we have already emitted "restart required" warnings (post-prim).
   std::unordered_set<PXR_NS::TfToken, PXR_NS::TfToken::HashFunctor> _warnedRestartOnly;
+  // The requested device types already warned to have no devices: BuildSessionParams, which
+  // falls back to the CPU, runs for every restart-only setting.
+  mutable std::unordered_set<std::string> _warnedNoDevice;
 
   // Count of real (non-fallback) prims that have been created. While this is zero
   // restart-only settings trigger a Session rebuild; after it goes positive they are ignored.
