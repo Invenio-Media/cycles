@@ -147,13 +147,18 @@ if(HOUDINI_ROOT AND EXISTS ${HOUDINI_ROOT})
   # soname) a library of the same name resolves to the one already loaded: Cycles compiled
   # against a newer OIDN would call Houdini's, which ignores what it doesn't know (OIDN 2.2,
   # in Houdini 21, has no "fast" quality). macOS binds each library to the one it was linked
-  # with, so the package's own OIDN is used there.
+  # with, so the package's own OIDN is used there. Cycles' OIDN code must keep building against
+  # the oldest OIDN a supported Houdini ships (2.2.2 in 21.0), through its OIDN_VERSION guards.
   if(NOT APPLE)
     find_library(_oidn_library NAMES OpenImageDenoise PATHS ${_library_dir} NO_DEFAULT_PATH)
     if(_oidn_library AND EXISTS "${_include_dir}/OpenImageDenoise/oidn.h")
       set(OPENIMAGEDENOISE_INCLUDE_DIRS ${_include_dir})
       set(OPENIMAGEDENOISE_LIBRARIES ${_oidn_library})
       set(USD_OVERRIDE_OPENIMAGEDENOISE ON)
+    else()
+      message(WARNING "Houdini's OpenImageDenoise was not found in ${_library_dir}. Cycles "
+        "builds against the package's, but at run time gets Houdini's, already loaded under "
+        "the same name, which can be older")
     endif()
     unset(_oidn_library CACHE)
   endif()
