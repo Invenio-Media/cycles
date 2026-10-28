@@ -14,6 +14,9 @@
 #include <pxr/imaging/hd/xformSchema.h>
 #include <pxr/usd/usdGeom/tokens.h>
 
+#include <algorithm>
+#include <cmath>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 /* A camera's transform samples across the shutter, an odd number as Cycles centres them. */
@@ -207,9 +210,9 @@ void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
                                          Camera *cam)
 {
   const GfRange2f &display = framing.displayWindow;
-  const GfRect2i &dataWindow = framing.dataWindow;
-  const int width = dataWindow.GetMaxX() + 1;
-  const int height = dataWindow.GetMaxY() + 1;
+  const GfVec2i raster = HdCyclesRasterSize(framing);
+  const int width = raster[0];
+  const int height = raster[1];
   cam->set_full_width(width);
   cam->set_full_height(height);
 
@@ -228,7 +231,7 @@ void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
   const float metersPerUnit = static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
 
   /* The conformed window (y up) covers the display window (pixels, y down). The viewplane covers
-   * the raster, from the origin to the data window's far corner, in the same units. */
+   * the raster, from the origin, in the same units. */
   const GfRange2d window = data.GetFrustum().GetWindow();
   const double unitsPerPixelX = window.GetSize()[0] / display.GetSize()[0];
   const double unitsPerPixelY = window.GetSize()[1] / display.GetSize()[1];
@@ -276,6 +279,14 @@ void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
   data.SetFromViewAndProjectionMatrix(worldToViewMatrix, projectionMatrix);
 
   ApplyCameraSettings(renderParam, data, framing, windowPolicy, cam);
+}
+
+GfVec2i HdCyclesRasterSize(const CameraUtilFraming &framing)
+{
+  const GfRect2i &dataWindow = framing.dataWindow;
+  const GfVec2f &displayMax = framing.displayWindow.GetMax();
+  return GfVec2i(std::max(dataWindow.GetMaxX() + 1, int(std::ceil(displayMax[0]))),
+                 std::max(dataWindow.GetMaxY() + 1, int(std::ceil(displayMax[1]))));
 }
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

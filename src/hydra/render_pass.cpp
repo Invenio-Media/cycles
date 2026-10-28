@@ -141,23 +141,32 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
      * camera; the data window is the pixels to render, which can crop or overscan it. */
     CameraUtilFraming framing = renderPassState->GetFraming();
     CameraUtilConformWindowPolicy windowPolicy = renderPassState->GetWindowPolicy();
+    /* Whether the render buffers are the data window, as husk's are, or start at the framing's
+     * origin, as a host's do. */
+    bool buffersAtDataWindow = false;
     if (!framing.IsValid()) {
       const GfVec4f vp = renderPassState->GetViewport();
       const GfRect2i viewport(GfVec2i(0), int(vp[2]), int(vp[3]));
       const HdCyclesProductFraming &product = _renderParam->productFraming;
       if (product.resolution[0] > 0 && product.resolution[1] > 0) {
         /* husk sends the product's framing as render settings, with render buffers the size of
-         * the data window: the data window is at the origin and the display window, the
-         * resolution, is offset from it. The data window holds the pixels whose centres are in
+         * the data window. The data window holds the pixels whose centres are in
          * dataWindowNDC, which has y up. Its corner comes from dataWindowNDC and its size from
-         * the buffers husk allocated, which are what the tiles must fill. */
+         * the buffers husk allocated, which are what the tiles must fill. It is placed in the
+         * display window as it is in the image, so that a crop samples each pixel as the whole
+         * frame does; an overscanning corner before the display's moves both on, since the
+         * raster starts at the origin. */
         const GfVec4f &ndc = product.dataWindowNDC;
         const GfVec2f resolution(product.resolution[0], product.resolution[1]);
-        const GfVec2f corner(std::ceil(ndc[0] * resolution[0] - 0.5f),
-                             std::ceil((1.0f - ndc[3]) * resolution[1] - 0.5f));
+        const GfVec2i corner(int(std::ceil(ndc[0] * resolution[0] - 0.5f)),
+                             int(std::ceil((1.0f - ndc[3]) * resolution[1] - 0.5f)));
+        const GfVec2i shift(std::max(-corner[0], 0), std::max(-corner[1], 0));
         framing = CameraUtilFraming(
-            GfRange2f(-corner, resolution - corner), viewport, product.pixelAspectRatio);
+            GfRange2f(GfVec2f(shift[0], shift[1]), resolution + GfVec2f(shift[0], shift[1])),
+            GfRect2i(corner + shift, viewport.GetWidth(), viewport.GetHeight()),
+            product.pixelAspectRatio);
         windowPolicy = product.windowPolicy;
+        buffersAtDataWindow = true;
       }
       else {
         framing = CameraUtilFraming(viewport);
@@ -193,26 +202,28 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
       // Reset convergence state of all render buffers
       ResetConverged();
 
-      /* Framing pixel space, which the render buffers are in: the full frame runs from the
-       * origin to the data window's far corner, as the camera's raster does, and Cycles renders
-       * the data window of it. */
+      /* Framing pixel space: the raster runs from the origin to the far corner of the data and
+       * display windows, as the camera's does, and Cycles renders the data window of it.
+       * Cycles' raster and the render buffers run bottom up, the framing top down. Cycles
+       * places its buffer in the raster by full_x/full_y; its window is the part of the
+       * buffer to keep, all of it here. */
       const GfRect2i &dataWindow = framing.dataWindow;
+      const GfVec2i raster = HdCyclesRasterSize(framing);
       BufferParams buffer_params;
-      buffer_params.full_x = 0;
-      buffer_params.full_y = 0;
-      buffer_params.full_width = dataWindow.GetMaxX() + 1;
-      buffer_params.full_height = dataWindow.GetMaxY() + 1;
+      buffer_params.full_x = dataWindow.GetMinX();
+      buffer_params.full_y = raster[1] - (dataWindow.GetMaxY() + 1);
+      buffer_params.full_width = raster[0];
+      buffer_params.full_height = raster[1];
 
-      buffer_params.window_x = dataWindow.GetMinX();
-      buffer_params.window_y = dataWindow.GetMinY();
-      buffer_params.window_width = dataWindow.GetWidth();
-      buffer_params.window_height = dataWindow.GetHeight();
+      buffer_params.width = dataWindow.GetWidth();
+      buffer_params.height = dataWindow.GetHeight();
 
-      buffer_params.width = buffer_params.window_width;
-      buffer_params.height = buffer_params.window_height;
+      buffer_params.window_x = 0;
+      buffer_params.window_y = 0;
+      buffer_params.window_width = buffer_params.width;
+      buffer_params.window_height = buffer_params.height;
 
-      /* Cycles' tiles are placed from the data window's corner. */
-      _renderParam->SetDataWindowOrigin(GfVec2i(dataWindow.GetMinX(), dataWindow.GetMinY()));
+      _renderParam->SetDataWindow(dataWindow, buffersAtDataWindow);
 
       session->reset(session->params, buffer_params);
     }

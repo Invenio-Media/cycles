@@ -66,7 +66,7 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
         }
       };
       // The tile's place in the render buffer, which is in framing pixel space.
-      const GfVec2i origin = _renderParam->GetDataWindowOrigin() +
+      const GfVec2i origin = _renderParam->GetDataWindowOrigin(renderBuffer->GetHeight()) +
                              GfVec2i(tile.offset.x, tile.offset.y);
       // Avoid extra copy by mapping render buffer directly when dimensions/format match the tile
       if (origin == GfVec2i(0) && tile.size.x == renderBuffer->GetWidth() &&

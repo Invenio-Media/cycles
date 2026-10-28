@@ -22,9 +22,10 @@ class HdCyclesCamera final : public PXR_NS::HdCamera {
   ~HdCyclesCamera() override;
 
   /* Sets a Cycles camera to render a framing's data window. Its raster is framing pixel space,
-   * from the origin to the data window's far corner (the render pass renders the data window
-   * of it), and the camera is conformed to the display window, with its pixel aspect and the
-   * window policy: a data window inside the display window crops, one beyond it overscans. */
+   * from the origin to the far corner of the data and display windows (HdCyclesRasterSize; the
+   * render pass renders the data window of it), and the camera is conformed to the display
+   * window, with its pixel aspect and the window policy: a data window inside the display
+   * window crops, one beyond it overscans. */
   void ApplyCameraSettings(PXR_NS::HdRenderParam *renderParam,
                            const PXR_NS::CameraUtilFraming &framing,
                            PXR_NS::CameraUtilConformWindowPolicy windowPolicy,
@@ -56,5 +57,11 @@ class HdCyclesCamera final : public PXR_NS::HdCamera {
   // The transform at evenly spaced times across the shutter; one when it doesn't move.
   std::vector<PXR_NS::GfMatrix4d> _motionTransforms;
 };
+
+/* The raster a framing renders in, in pixels from the origin: to the far corner of its data
+ * window and of its display window, whichever is further. Cycles' raster runs bottom up, and
+ * its sample sequences follow the raster's pixels, so a crop of the display window samples
+ * each pixel as the whole window does only on a raster that reaches the display's far edge. */
+PXR_NS::GfVec2i HdCyclesRasterSize(const PXR_NS::CameraUtilFraming &framing);
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

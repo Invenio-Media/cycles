@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include <pxr/base/gf/rect2i.h>
 #include <pxr/base/gf/vec2i.h>
 #include <pxr/base/gf/vec4f.h>
 #include <pxr/imaging/cameraUtil/conformWindow.h>
@@ -182,17 +183,23 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
 
   void RemoveAovBinding(PXR_NS::HdRenderBuffer *renderBuffer);
 
-  // Where the rendered data window starts in the render buffers, which the output driver
-  // places Cycles' tiles from. Read under GetAovMutex().
-  PXR_NS::GfVec2i GetDataWindowOrigin() const
+  /* Where the rendered data window starts in a render buffer of the given height, which the
+   * output driver places Cycles' tiles from. Buffers run bottom up. husk's buffers are the data
+   * window; a host's start at the framing's origin, top down, and hold the data window where
+   * the framing says. Read under GetAovMutex(). */
+  PXR_NS::GfVec2i GetDataWindowOrigin(const int bufferHeight) const
   {
-    return _dataWindowOrigin;
+    if (_buffersAtDataWindow) {
+      return PXR_NS::GfVec2i(0);
+    }
+    return PXR_NS::GfVec2i(_dataWindow.GetMinX(), bufferHeight - (_dataWindow.GetMaxY() + 1));
   }
 
-  void SetDataWindowOrigin(const PXR_NS::GfVec2i &origin)
+  void SetDataWindow(const PXR_NS::GfRect2i &dataWindow, const bool buffersAtDataWindow)
   {
     const CCL_NS::thread_scoped_lock lock(_aovMutex);
-    _dataWindowOrigin = origin;
+    _dataWindow = dataWindow;
+    _buffersAtDataWindow = buffersAtDataWindow;
   }
 
   // Meshes subdivided with pixel-space dicing, which the render pass re-dices when they or the
@@ -257,7 +264,8 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   PXR_NS::HdRenderPassAovBindingVector _aovBindings;
   std::vector<HdCyclesAovPass> _aovPasses;
   PXR_NS::HdRenderPassAovBinding _displayAovBinding;
-  PXR_NS::GfVec2i _dataWindowOrigin = PXR_NS::GfVec2i(0);
+  PXR_NS::GfRect2i _dataWindow;
+  bool _buffersAtDataWindow = false;
   mutable CCL_NS::thread_mutex _aovMutex;
   std::unordered_set<HdCyclesMesh *> _pixelDiced;
   CCL_NS::thread_mutex _pixelDicedMutex;
