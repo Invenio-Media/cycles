@@ -313,6 +313,29 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
     }
   }
 
+  /* displayColor can change without the material binding: keep the instances' colour and the
+   * choice of default surface in step with it. A constant one is set as the primvars sync. */
+  if (*dirtyBits & HdChangeTracker::DirtyPrimvar) {
+    if (ReadPrimvarInterpolation(HdPrimvarsSchema::GetFromParent(primDs),
+                                 HdTokens->displayColor) != HdInterpolationConstant)
+    {
+      SetDisplayColor(GfVec3f(0.8f));
+    }
+    array<Node *> usedShaders = _geom->get_used_shaders();
+    Shader *const displayColorSurface =
+        static_cast<HdCyclesSession *>(renderParam)->displayColorSurface;
+    if (!usedShaders.empty() &&
+        (usedShaders[0] == lock.scene->default_surface || usedShaders[0] == displayColorSurface))
+    {
+      Shader *const surface = DefaultSurface(lock.scene, primDs, renderParam);
+      if (usedShaders[0] != surface) {
+        usedShaders[0] = surface;
+        surface->tag_used(lock.scene);
+        _geom->set_used_shaders(usedShaders);
+      }
+    }
+  }
+
   // Must happen after material ID update, so that attribute decisions can be made
   // based on it (e.g. check whether an attribute is actually needed)
   bool rebuild = false;
@@ -529,12 +552,16 @@ Shader *HdCyclesGeometry<Base, CyclesBase>::DefaultSurface(
   if (_geom->is_volume()) {
     return scene->default_volume;
   }
+  /* The primvar's surface for a displayColor that varies and is colours, which the primvar
+   * sync uploads; anything else would read as black. */
   Shader *const displayColorSurface =
       static_cast<HdCyclesSession *>(renderParam)->displayColorSurface;
-  const HdInterpolation interpolation = ReadPrimvarInterpolation(
-      HdPrimvarsSchema::GetFromParent(primDs), HdTokens->displayColor);
+  const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(primDs);
+  const HdInterpolation interpolation = ReadPrimvarInterpolation(primvars, HdTokens->displayColor);
+  /* HdInterpolationCount: no displayColor. */
   if (displayColorSurface && interpolation != HdInterpolationConstant &&
-      interpolation != HdInterpolationCount)
+      interpolation != HdInterpolationCount &&
+      ReadPrimvar(primvars, HdTokens->displayColor).IsHolding<VtVec3fArray>())
   {
     return displayColorSurface;
   }

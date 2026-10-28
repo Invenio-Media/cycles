@@ -194,26 +194,14 @@ HdCyclesSession::HdCyclesSession(const SessionParams &params, const SceneParams 
     scene->default_background->tag_update(scene);
   }
 
-  /* The default surfaces: a diffuse of the object colour (a constant displayColor), and one of
-   * the displayColor primvar where it varies over the geometry. */
-  displayColorSurface = scene->create_node<Shader>();
-  displayColorSurface->name = ustring("displayColor_surface");
-  for (Shader *const shader : {scene->default_surface, displayColorSurface}) {
+  /* The default surfaces: a diffuse of a colour, with the instanceId AOV the viewport reads. */
+  const auto setDefaultSurface = [scene](Shader *shader, ShaderOutput *(*color)(ShaderGraph &)) {
     unique_ptr<ShaderGraph> graph = make_unique<ShaderGraph>();
 
     DiffuseBsdfNode *diffuseNode = graph->create_node<DiffuseBsdfNode>();
-    if (shader == displayColorSurface) {
-      AttributeNode *colorNode = graph->create_node<AttributeNode>();
-      colorNode->set_attribute(ustring(HdTokens->displayColor.GetString()));
-      graph->connect(colorNode->output("Color"), diffuseNode->input("Color"));
-    }
-    else {
-      ObjectInfoNode *objectNode = graph->create_node<ObjectInfoNode>();
-      graph->connect(objectNode->output("Color"), diffuseNode->input("Color"));
-    }
+    graph->connect(color(*graph), diffuseNode->input("Color"));
     graph->connect(diffuseNode->output("BSDF"), graph->output()->input("Surface"));
 
-    // Create the instanceId AOV output
     const ustring instanceId(HdAovTokens->instanceId.GetString());
 
     OutputAOVNode *aovNode = graph->create_node<OutputAOVNode>();
@@ -226,7 +214,21 @@ HdCyclesSession::HdCyclesSession(const SessionParams &params, const SceneParams 
 
     shader->set_graph(std::move(graph));
     shader->tag_update(scene);
-  }
+  };
+
+  // The object colour: a constant displayColor, or grey.
+  setDefaultSurface(scene->default_surface, [](ShaderGraph &graph) {
+    return graph.create_node<ObjectInfoNode>()->output("Color");
+  });
+
+  // The displayColor primvar, where it varies over the geometry.
+  displayColorSurface = scene->create_node<Shader>();
+  displayColorSurface->name = ustring("displayColor_surface");
+  setDefaultSurface(displayColorSurface, [](ShaderGraph &graph) {
+    AttributeNode *colorNode = graph.create_node<AttributeNode>();
+    colorNode->set_attribute(ustring(HdTokens->displayColor.GetString()));
+    return colorNode->output("Color");
+  });
 }
 
 HdCyclesSession::~HdCyclesSession()
