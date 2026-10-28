@@ -237,7 +237,9 @@ void HdCyclesMesh::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyBit
   ResetTessellation();
 
   /* Cycles dices only subdivision meshes; a polygon mesh's true displacement moves its
-   * vertices and nothing between them, where Karma dices it. Said once, with the remedy. */
+   * vertices and nothing between them, where Karma dices it. Said once per mesh, with the
+   * remedy. Materials sync before the geometry, and a new binding resyncs the mesh, so the
+   * shaders are final here; an edit to a bound material's method alone isn't caught. */
   if (!_warnedUndiced && _geom->get_subdivision_type() == Mesh::SUBDIVISION_NONE) {
     for (const Node *node : _geom->get_used_shaders()) {
       const Shader *const shader = static_cast<const Shader *>(node);
