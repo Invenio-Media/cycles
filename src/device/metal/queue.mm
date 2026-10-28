@@ -300,8 +300,10 @@ int MetalDeviceQueue::num_concurrent_states(const size_t state_size) const
       }
       else {
         /* Aggressive safety margin: only grow if it leaves us at < 50% max working set
-         * utilization. */
-        size_t grow_percent = 50;
+         * utilization. Off by default in this fork (CYCLES_METAL_GROW_PERCENT=50 restores
+         * Blender's growth): on an M4 Max, doubling the states twice took husk's peak footprint
+         * from 4-5 GB to 8-11 GB, and rendered no faster (up to 14% slower). */
+        size_t grow_percent = 0;
         if (auto *str = getenv("CYCLES_METAL_GROW_PERCENT")) {
           grow_percent = atoi(str);
         }
