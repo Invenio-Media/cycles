@@ -143,6 +143,21 @@ if(HOUDINI_ROOT AND EXISTS ${HOUDINI_ROOT})
   endif()
   unset(_tbb_library CACHE)
 
+  # OpenImageDenoise, outside macOS. Houdini loads its own OIDN, and on Windows (and Linux, by
+  # soname) a library of the same name resolves to the one already loaded: Cycles compiled
+  # against a newer OIDN would call Houdini's, which ignores what it doesn't know (OIDN 2.2,
+  # in Houdini 21, has no "fast" quality). macOS binds each library to the one it was linked
+  # with, so the package's own OIDN is used there.
+  if(NOT APPLE)
+    find_library(_oidn_library NAMES OpenImageDenoise PATHS ${_library_dir} NO_DEFAULT_PATH)
+    if(_oidn_library AND EXISTS "${_include_dir}/OpenImageDenoise/oidn.h")
+      set(OPENIMAGEDENOISE_INCLUDE_DIRS ${_include_dir})
+      set(OPENIMAGEDENOISE_LIBRARIES ${_oidn_library})
+      set(USD_OVERRIDE_OPENIMAGEDENOISE ON)
+    endif()
+    unset(_oidn_library CACHE)
+  endif()
+
   # OpenColorIO
   find_library(_opencolorio_library NAMES OpenColorIO_sidefx PATHS ${_library_dir} NO_DEFAULT_PATH)
   if(_opencolorio_library)

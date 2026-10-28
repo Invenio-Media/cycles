@@ -179,9 +179,9 @@ if(WITH_CYCLES_HYDRA_RENDER_DELEGATE)
     delayed_install("" $<TARGET_FILE:${HdCyclesPluginName}> ${CYCLES_HYDRA_INSTALL_PATH}/usd)
 
     # The plugin is installed by copying the built file, so it gets its final rpath at build
-    # time: from dso/usd/ to the package's lib/ (Embree, OpenImageDenoise). Houdini's own
-    # libraries are found through the host process. Windows finds the DLLs through PATH, which
-    # the package file extends.
+    # time: from dso/usd/ to the package's lib/ (Embree; OpenImageDenoise on macOS, where it's
+    # the package's). Houdini's own libraries are found through the host process. Windows
+    # finds the DLLs through PATH, which the package file extends.
     if(APPLE)
       set(_hydra_install_rpath "@loader_path/../../lib")
     elseif(UNIX)
