@@ -139,8 +139,10 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   // A rebuilt session keeps the cameras, which don't hold it back from rebuilding.
   void TakeCameras(HdCyclesSession &previous);
   // A host clearing the shutter's open or close setting (Houdini's viewport does, for a render
-  // settings prim that doesn't author them): the render camera's shutter applies again.
-  // Returns whether the shutter changed.
+  // settings prim that doesn't author them): the render camera's shutter applies again, open
+  // and close together, as they come from settings together. A host that cleared one and set
+  // the other in the same batch would get whichever came last. Returns whether the shutter
+  // changed.
   bool ClearShutterSettings();
 
   double GetStageMetersPerUnit() const
