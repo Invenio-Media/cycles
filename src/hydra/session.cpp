@@ -194,15 +194,23 @@ HdCyclesSession::HdCyclesSession(const SessionParams &params, const SceneParams 
     scene->default_background->tag_update(scene);
   }
 
-  // Wire up object color in default surface material
-  {
+  /* The default surfaces: a diffuse of the object colour (a constant displayColor), and one of
+   * the displayColor primvar where it varies over the geometry. */
+  displayColorSurface = scene->create_node<Shader>();
+  displayColorSurface->name = ustring("displayColor_surface");
+  for (Shader *const shader : {scene->default_surface, displayColorSurface}) {
     unique_ptr<ShaderGraph> graph = make_unique<ShaderGraph>();
 
-    ObjectInfoNode *objectNode = graph->create_node<ObjectInfoNode>();
-
     DiffuseBsdfNode *diffuseNode = graph->create_node<DiffuseBsdfNode>();
-
-    graph->connect(objectNode->output("Color"), diffuseNode->input("Color"));
+    if (shader == displayColorSurface) {
+      AttributeNode *colorNode = graph->create_node<AttributeNode>();
+      colorNode->set_attribute(ustring(HdTokens->displayColor.GetString()));
+      graph->connect(colorNode->output("Color"), diffuseNode->input("Color"));
+    }
+    else {
+      ObjectInfoNode *objectNode = graph->create_node<ObjectInfoNode>();
+      graph->connect(objectNode->output("Color"), diffuseNode->input("Color"));
+    }
     graph->connect(diffuseNode->output("BSDF"), graph->output()->input("Surface"));
 
     // Create the instanceId AOV output
@@ -216,8 +224,8 @@ HdCyclesSession::HdCyclesSession(const SessionParams &params, const SceneParams 
 
     graph->connect(instanceIdNode->output("Fac"), aovNode->input("Value"));
 
-    scene->default_surface->set_graph(std::move(graph));
-    scene->default_surface->tag_update(scene);
+    shader->set_graph(std::move(graph));
+    shader->tag_update(scene);
   }
 }
 

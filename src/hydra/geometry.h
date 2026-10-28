@@ -53,6 +53,10 @@ template<typename Base, typename CyclesBase> class HdCyclesGeometry : public Bas
                          const std::vector<PXR_NS::VtVec3fArray> &samples,
                          size_t count);
 
+  /* A constant displayColor: the colour of every instance, which the default surface shades
+   * with. Instances made later take it too. */
+  void SetDisplayColor(const PXR_NS::GfVec3f &color);
+
   CyclesBase *_geom = nullptr;
   std::vector<CCL_NS::Object *> _instances;
 
@@ -70,6 +74,13 @@ template<typename Base, typename CyclesBase> class HdCyclesGeometry : public Bas
   void Initialize(PXR_NS::HdRenderParam *renderParam);
 
   void InitializeInstance(const int index);
+
+  /* The surface of geometry without a material: Cycles' default volume for a volume, the
+   * session's displayColor surface where displayColor varies over the geometry, else Cycles'
+   * default surface. */
+  CCL_NS::Shader *DefaultSurface(CCL_NS::Scene *scene,
+                                 const PXR_NS::HdContainerDataSourceHandle &primDs,
+                                 PXR_NS::HdRenderParam *renderParam) const;
 
   /* UsdLuxMeshLightAPI (a light API on the geometry): the geometry renders with an emission
    * shader of the light's own instead of its material, and is hidden from the camera, as
@@ -90,6 +101,8 @@ template<typename Base, typename CyclesBase> class HdCyclesGeometry : public Bas
   PXR_NS::GfMatrix4d _geomTransform;
   // The transform at evenly spaced times across the shutter; empty when it doesn't move.
   std::vector<PXR_NS::GfMatrix4d> _geomMotion;
+  // The constant displayColor, or Blender's default grey without one.
+  PXR_NS::GfVec3f _displayColor{0.8f, 0.8f, 0.8f};
   // False when the instancer gives the prim no instances: the first object is kept, since the
   // prim's settings live on it, but hidden.
   bool _hasInstances = true;

@@ -239,6 +239,12 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   // Light and shadow linking; lights and geometry report to it as they sync.
   HdCyclesLightLinking lightLinking;
 
+  /* The surface of geometry with no material and a displayColor that varies over it (uniform,
+   * vertex, varying or face-varying): a diffuse of that primvar, as Karma shades it. Geometry
+   * with a constant displayColor, or none, keeps Cycles' default surface, a diffuse of its
+   * object colour. Null when Cycles' session is the host's (Blender). */
+  CCL_NS::Shader *displayColorSurface = nullptr;
+
   // Set by husk; the render pass frames from it when it has no framing of its own.
   HdCyclesProductFraming productFraming;
 

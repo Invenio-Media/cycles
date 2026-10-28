@@ -108,10 +108,7 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
       usedShaders[0] = material->GetCyclesShader();
     }
     else {
-      /* A volume without a material renders its density grid, as Karma and Blender do; the
-       * default surface has no volume part and would leave it black. */
-      usedShaders[0] = _geom->is_volume() ? lock.scene->default_volume :
-                                            lock.scene->default_surface;
+      usedShaders[0] = DefaultSurface(lock.scene, primDs, renderParam);
     }
 
     for (Node *shader : usedShaders) {
@@ -411,8 +408,9 @@ void HdCyclesGeometry<Base, CyclesBase>::UpdateMeshLight(HdSceneDelegate *sceneD
           sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material,
                                                    Base::GetMaterialId()));
       array<Node *> usedShaders(1);
-      usedShaders[0] = material && material->GetCyclesShader() ? material->GetCyclesShader() :
-                                                                 scene->default_surface;
+      usedShaders[0] = material && material->GetCyclesShader() ?
+                           material->GetCyclesShader() :
+                           DefaultSurface(scene, primDs, renderParam);
       static_cast<Shader *>(usedShaders[0])->tag_used(scene);
       _geom->set_used_shaders(usedShaders);
       scene->delete_node(_lightShader);
@@ -509,8 +507,38 @@ void HdCyclesGeometry<Base, CyclesBase>::InitializeInstance(int index)
                                     static_cast<float>(index + 1));
   instance->set_pass_id(Base::GetPrimId() + 1);
 
-  instance->set_color(make_float3(0.8f, 0.8f, 0.8f));
+  instance->set_color(make_float3(_displayColor[0], _displayColor[1], _displayColor[2]));
   instance->set_random_id(hash_uint2(hash_string(_geom->name.c_str()), index));
+}
+
+template<typename Base, typename CyclesBase>
+void HdCyclesGeometry<Base, CyclesBase>::SetDisplayColor(const GfVec3f &color)
+{
+  _displayColor = color;
+  for (Object *instance : _instances) {
+    instance->set_color(make_float3(color[0], color[1], color[2]));
+  }
+}
+
+template<typename Base, typename CyclesBase>
+Shader *HdCyclesGeometry<Base, CyclesBase>::DefaultSurface(
+    Scene *scene, const HdContainerDataSourceHandle &primDs, HdRenderParam *renderParam) const
+{
+  /* A volume without a material renders its density grid, as Karma and Blender do; the
+   * default surface has no volume part and would leave it black. */
+  if (_geom->is_volume()) {
+    return scene->default_volume;
+  }
+  Shader *const displayColorSurface =
+      static_cast<HdCyclesSession *>(renderParam)->displayColorSurface;
+  const HdInterpolation interpolation = ReadPrimvarInterpolation(
+      HdPrimvarsSchema::GetFromParent(primDs), HdTokens->displayColor);
+  if (displayColorSurface && interpolation != HdInterpolationConstant &&
+      interpolation != HdInterpolationCount)
+  {
+    return displayColorSurface;
+  }
+  return scene->default_surface;
 }
 
 template<typename Base, typename CyclesBase>
