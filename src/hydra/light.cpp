@@ -737,6 +737,9 @@ void HdCyclesLight::Initialize(HdRenderParam *renderParam)
 
   _object = lock.scene->create_node<Object>();
   _object->name = GetId().GetString();
+  /* Its parent prim is its Cryptomatte asset, as for geometry (HdCyclesGeometry). Without one,
+   * the lights shared an empty asset, which the manifest listed as "(null)". */
+  _object->set_asset_name(ustring(GetId().GetParentPath().GetString()));
 
   if (_lightType == HdPrimTypeTokens->domeLight) {
     _light = lock.scene->create_node<BackgroundLight>();
