@@ -154,6 +154,17 @@ if(HOUDINI_ROOT AND EXISTS ${HOUDINI_ROOT})
     if(_oidn_library AND EXISTS "${_include_dir}/OpenImageDenoise/oidn.h")
       set(OPENIMAGEDENOISE_INCLUDE_DIRS ${_include_dir})
       set(OPENIMAGEDENOISE_LIBRARIES ${_oidn_library})
+      # Linux: Houdini 21's libOpenImageDenoise has a RUNPATH of SideFX's build tree rather than
+      # $ORIGIN, so it can't find its own core beside it. Linked here too, the core loads first,
+      # through the plugin's rpath, and OpenImageDenoise then finds it loaded, by soname.
+      if(UNIX)
+        find_library(_oidn_core_library NAMES OpenImageDenoise_core PATHS ${_library_dir}
+          NO_DEFAULT_PATH)
+        if(_oidn_core_library)
+          list(APPEND OPENIMAGEDENOISE_LIBRARIES ${_oidn_core_library})
+        endif()
+        unset(_oidn_core_library CACHE)
+      endif()
       set(USD_OVERRIDE_OPENIMAGEDENOISE ON)
     else()
       message(WARNING "Houdini's OpenImageDenoise was not found in ${_library_dir}. Cycles "

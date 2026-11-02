@@ -180,12 +180,16 @@ if(WITH_CYCLES_HYDRA_RENDER_DELEGATE)
 
     # The plugin is installed by copying the built file, so it gets its final rpath at build
     # time: from dso/usd/ to the package's lib/ (Embree; OpenImageDenoise on macOS, where it's
-    # the package's). Houdini's own libraries are found through the host process. Windows
-    # finds the DLLs through PATH, which the package file extends.
+    # the package's). Windows finds the DLLs through PATH, which the package file extends.
+    # macOS finds Houdini's libraries through the host process. On Linux only those the host
+    # has already loaded resolve: husk's RUNPATH isn't inherited, and it hasn't loaded
+    # hdMtlx, MaterialX's render libraries or OpenImageDenoise, so Houdini's dsolib (and its
+    # Python) follow, absolute, as hcustom links HDK plugins (-rpath $HFS/dsolib).
     if(APPLE)
       set(_hydra_install_rpath "@loader_path/../../lib")
     elseif(UNIX)
-      set(_hydra_install_rpath "$ORIGIN/../../lib")
+      set(_hydra_install_rpath
+        "$ORIGIN/../../lib;${HOUDINI_ROOT}/dsolib;${HOUDINI_ROOT}/python/lib")
     endif()
     if(DEFINED _hydra_install_rpath)
       set_target_properties(${HdCyclesPluginName} PROPERTIES
