@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <functional>
+
 #include "device/memory.h"
 
 #include "scene/image_cache.h"
@@ -184,6 +186,10 @@ class ImageManager {
   bool get_use_texture_cache() const;
   bool get_auto_texture_cache() const;
 
+  /* Makes the loader for an image file. A host whose own image formats OpenImageIO can't read
+   * sets it to load those; returning null leaves the file to OpenImageIO. */
+  std::function<unique_ptr<ImageLoader>(const string &filepath)> file_loader;
+
  private:
   bool need_update_ = true;
 
@@ -209,6 +215,7 @@ class ImageManager {
                                  const bool builtin);
   ImageUDIM *add_image_texture(vector<std::pair<int, ImageHandle>> &&tiles);
 
+  unique_ptr<ImageLoader> make_file_loader(const string &filepath) const;
   void load_image_metadata(ImageSingle *img, Progress &progress);
 
   void device_gpu_load_requested(Device *device, DeviceQueue &queue, Scene *scene);

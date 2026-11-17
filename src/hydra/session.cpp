@@ -5,6 +5,9 @@
 
 #include "hydra/session.h"
 #include "hydra/diagnostic.h"
+#ifdef WITH_HYDRA_HOUDINI_IMAGES
+#  include "hydra/houdini_image.h"
+#endif
 #include "scene/camera.h"
 #include "scene/film.h"
 #include "scene/integrator.h"
@@ -180,6 +183,12 @@ HdCyclesSession::HdCyclesSession(const SessionParams &params, const SceneParams 
     session->process_full_buffer_from_disk(path);
     path_remove(path);
   };
+
+#ifdef WITH_HYDRA_HOUDINI_IMAGES
+  /* Houdini's own image formats, such as the .rat of Houdini's sample HDRIs, which Karma reads
+   * and OpenImageIO can't: Cycles drew them in its missing-texture magenta. */
+  scene->image_manager->file_loader = HdCyclesHoudiniImageLoader;
+#endif
 
   // Create background with ambient light
   {

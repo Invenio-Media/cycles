@@ -83,6 +83,27 @@ if(EXISTS ${USD_INCLUDE_DIR}/pxr/imaging/hgiGL)
   list(APPEND SRC_HD_CYCLES_HEADERS display_driver.h)
 endif()
 
+# Houdini's own image formats (.rat), through Houdini's image library. Its headers need the
+# HDK's compile flags, so only the file that includes them gets them; not the HDK's C++
+# standard or macOS deployment target, which are the project's.
+if(HOUDINI_FOUND AND HOUDINI_UT_LIBRARY)
+  find_package(Houdini CONFIG REQUIRED PATHS ${HOUDINI_CMAKE_DIR} NO_DEFAULT_PATH)
+  get_target_property(_hdk_definitions Houdini INTERFACE_COMPILE_DEFINITIONS)
+  get_target_property(_hdk_options Houdini INTERFACE_COMPILE_OPTIONS)
+  list(FILTER _hdk_options EXCLUDE REGEX "std[=:]c\\+\\+|macosx-version-min")
+  set_source_files_properties(houdini_image_io.cpp PROPERTIES
+    COMPILE_DEFINITIONS "${_hdk_definitions}"
+    COMPILE_OPTIONS "${_hdk_options}"
+  )
+  unset(_hdk_definitions)
+  unset(_hdk_options)
+
+  add_definitions(-DWITH_HYDRA_HOUDINI_IMAGES)
+  list(APPEND SRC_HD_CYCLES houdini_image.cpp houdini_image_io.cpp)
+  list(APPEND SRC_HD_CYCLES_HEADERS houdini_image.h houdini_image_io.h)
+  list(APPEND LIB ${HOUDINI_UT_LIBRARY})
+endif()
+
 # Silence warning from USD headers using deprecated TBB header.
 add_definitions(
   -D__TBB_show_deprecation_message_atomic_H

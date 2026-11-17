@@ -262,6 +262,18 @@ if(HOUDINI_ROOT AND EXISTS ${HOUDINI_ROOT})
   unset(_materialx_genglsl_library CACHE)
   unset(_materialx_genmsl_library CACHE)
 
+  # Houdini's image library, in libHoudiniUT, for Houdini's own image formats (.rat) that
+  # OpenImageIO can't read, and the HDK's CMake config, for the flags its headers need.
+  find_library(_houdini_ut_library NAMES HoudiniUT PATHS ${_library_dir} NO_DEFAULT_PATH)
+  if(_houdini_ut_library AND EXISTS "${_include_dir}/../cmake/HoudiniConfig.cmake")
+    set(HOUDINI_UT_LIBRARY ${_houdini_ut_library})
+    get_filename_component(HOUDINI_CMAKE_DIR "${_include_dir}/../cmake" ABSOLUTE)
+  else()
+    message(WARNING "Houdini's libHoudiniUT or HDK CMake config was not found; Cycles won't "
+      "read Houdini's own image formats (.rat)")
+  endif()
+  unset(_houdini_ut_library CACHE)
+
   # Cleanup
   unset(_library_dir)
   unset(_include_dir)
