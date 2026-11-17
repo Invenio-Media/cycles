@@ -220,10 +220,7 @@ class UsdToCyclesTexture : public UsdToCyclesMapping {
           return "colorspace";
         }
         if (valueToken == CyclesMaterialTokens->sRGB) {
-          /* The ColorInterop ID first, then the names and aliases of the ACES and Houdini
-           * configs. */
-          const ustring srgb = ColorSpaceManager::find_colorspace(
-              {"srgb_rec709_scene", "srgb_tx", "sRGB - Texture", "srgb_texture", "sRGB"});
+          const ustring srgb = ColorSpaceManager::find_srgb_texture_colorspace();
           if (!srgb.empty()) {
             *value = VtValue(TfToken(srgb.string()));
             return "colorspace";

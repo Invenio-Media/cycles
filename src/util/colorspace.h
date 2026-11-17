@@ -75,6 +75,10 @@ class ColorSpaceManager {
    * defines, or an empty ustring when it defines none of them. */
   static ustring find_colorspace(std::initializer_list<const char *> names);
 
+  /* The config's sRGB texture colorspace: by its ColorInterop ID, then the names and aliases
+   * of the ACES and Houdini configs. Empty when the config defines none of them. */
+  static ustring find_srgb_texture_colorspace();
+
   /* Compute matrix to convert from XYZ to scene linear RGB, based on the config. */
   static Transform get_xyz_to_scene_linear_rgb();
   static Transform get_xyz_to_rec709();

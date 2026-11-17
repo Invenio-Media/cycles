@@ -387,6 +387,15 @@ ustring ColorSpaceManager::detect_known_colorspace(ustring colorspace,
       if (role_colorspace && role_colorspace[0]) {
         colorspace = role_colorspace;
       }
+      /* No role for integer images, as in the ACES configs Houdini ships: the config's sRGB
+       * texture colorspace. Cycles' builtin sRGB, below, encoded such images to sRGB a second
+       * time instead of decoding them, which rendered them too bright. */
+      else if (!is_float) {
+        const ustring srgb = find_srgb_texture_colorspace();
+        if (!srgb.empty()) {
+          colorspace = srgb;
+        }
+      }
     }
   }
 #else
@@ -758,6 +767,12 @@ ustring ColorSpaceManager::find_colorspace(std::initializer_list<const char *> n
   (void)names;
 #endif
   return ustring();
+}
+
+ustring ColorSpaceManager::find_srgb_texture_colorspace()
+{
+  return find_colorspace(
+      {"srgb_rec709_scene", "srgb_tx", "sRGB - Texture", "srgb_texture", "sRGB"});
 }
 
 bool ColorSpaceManager::set_scene_linear_colorspace(const string &colorspace)
