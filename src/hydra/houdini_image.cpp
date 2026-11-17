@@ -94,6 +94,9 @@ class HoudiniImageLoader : public ImageLoader {
         return false;
     }
 
+    /* Packed rows of the file's channels, which the buffer, sized for RGBA when there's more
+     * than one, holds at its start: conform_pixels() expands 2 and 3-channel rows to RGBA in
+     * place, as for OpenImageIO's loader. */
     std::string error;
     if (!HdCyclesHoudiniImage::ReadPixels(_filepath, _info, type, pixels, error)) {
       LOG_WARNING << "Image file " << _filepath << " failed to load: " << error;
