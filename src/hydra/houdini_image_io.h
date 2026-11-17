@@ -28,7 +28,8 @@ struct Info {
   std::string ocioColorspace;
 };
 
-/* Whether the file is in a format that Houdini reads and OpenImageIO doesn't. */
+/* Whether the file is in a format that Houdini reads and OpenImageIO doesn't: .rat only. Of
+ * Houdini's others, OpenImageIO reads most, and would claim .pic as Softimage's. */
 bool IsHoudiniFormat(const std::string &path);
 
 /* The file's resolution, channels and data type; false, with the reason, if it can't be read. */

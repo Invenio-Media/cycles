@@ -90,6 +90,13 @@ if(HOUDINI_FOUND AND HOUDINI_UT_LIBRARY)
   find_package(Houdini CONFIG REQUIRED PATHS ${HOUDINI_CMAKE_DIR} NO_DEFAULT_PATH)
   get_target_property(_hdk_definitions Houdini INTERFACE_COMPILE_DEFINITIONS)
   get_target_property(_hdk_options Houdini INTERFACE_COMPILE_OPTIONS)
+  # An unset property reads as <name>-NOTFOUND, which mustn't reach the compiler.
+  if(NOT _hdk_definitions)
+    set(_hdk_definitions)
+  endif()
+  if(NOT _hdk_options)
+    set(_hdk_options)
+  endif()
   list(FILTER _hdk_options EXCLUDE REGEX "std[=:]c\\+\\+|macosx-version-min")
   set_source_files_properties(houdini_image_io.cpp PROPERTIES
     COMPILE_DEFINITIONS "${_hdk_definitions}"
